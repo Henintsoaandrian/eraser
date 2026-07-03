@@ -492,7 +492,7 @@ class Badge(QFrame):
             self._icon_lbl.hide()
 
 # ------------------------------------------------------------------
-# MainWindow
+# MainWindow (corrigé)
 # ------------------------------------------------------------------
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -769,10 +769,18 @@ class MainWindow(QMainWindow):
     def _check_ecid(self, ecid):
         def task():
             valid = check_ecid_online(ecid)
-            self._ecid_valid = valid
-            # On n'active pas le bouton ici, il est déjà activé en fonction de pwnd et ibec_ok
-            # Mais on peut mettre à jour l'état si besoin (par ex afficher un message)
+            # Mettre à jour sur le thread principal
+            QTimer.singleShot(0, lambda: self._update_ecid_status(valid))
         threading.Thread(target=task, daemon=True).start()
+
+    def _update_ecid_status(self, valid):
+        self._ecid_valid = valid
+        can_run = self._pwnd and self._ibec_ok and self._ecid_valid
+        self.run_btn.setEnabled(can_run and not self._busy)
+        if valid:
+            self.step_lbl.setText("✅ ECID valid")
+        else:
+            self.step_lbl.setText("❌ ECID not registered")
 
     # ------------------------------------------------------------------
     # Run
@@ -780,7 +788,7 @@ class MainWindow(QMainWindow):
     def _start(self):
         # Vérifier d'abord si l'ECID est valide
         if self._ecid_valid is None:
-            # La vérification n'est pas encore terminée, on peut soit attendre, soit afficher un message
+            # La vérification n'est pas encore terminée
             QMessageBox.warning(self, "Vérification en cours", "Veuillez patienter, la vérification ECID est en cours.")
             return
 
