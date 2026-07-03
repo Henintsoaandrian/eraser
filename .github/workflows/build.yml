@@ -18,7 +18,8 @@ jobs:
           - os: windows-latest
             file_name: "MobiDocEraser"
             name: "Windows"
- 
+
+
     steps:
     - uses: actions/checkout@v4
 
@@ -37,20 +38,18 @@ jobs:
       run: |
         pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller pywin32 certifi
 
-    # ---- Téléchargement et extraction de libusb.dll (sans 7z) ----
-    - name: Download libusb DLL (Windows)
+    # ---- Récupération de libusb-1.0.dll via Chocolatey (Windows) ----
+    - name: Install libusb DLL (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        # Télécharger l'archive ZIP (plus simple à extraire)
-        curl -L -o libusb.zip "https://github.com/libusb/libusb/releases/download/v1.0.26/libusb-1.0.26.zip"
-        # Extraire avec Expand-Archive (intégré à PowerShell)
-        Expand-Archive -Path libusb.zip -DestinationPath . -Force
-        # Rechercher la DLL dans les sous-dossiers et la copier à la racine
-        $dll = Get-ChildItem -Recurse -Filter "libusb-1.0.dll" | Select-Object -First 1
-        if ($dll) {
-          Copy-Item $dll.FullName .
-          Write-Host "✅ libusb-1.0.dll extrait avec succès"
+        # Installer libusb via Chocolatey (inclut la DLL)
+        choco install libusb -y
+        # La DLL est placée dans le dossier tools de Chocolatey
+        $dllPath = "C:\ProgramData\chocolatey\lib\libusb\tools\libusb-1.0.dll"
+        if (Test-Path $dllPath) {
+          Copy-Item $dllPath .
+          Write-Host "✅ libusb-1.0.dll copié depuis Chocolatey"
         } else {
           Write-Host "❌ libusb-1.0.dll introuvable"
           exit 1
