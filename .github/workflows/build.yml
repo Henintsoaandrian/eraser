@@ -18,15 +18,6 @@ jobs:
           - os: windows-latest
             file_name: "MobiDocEraser"
             name: "Windows"
-          - os: ubuntu-latest
-            file_name: "MobiDocEraser"
-            name: "Linux"
-          - os: macos-latest
-            file_name: "MobiDocEraser"
-            name: "macOS ARM"
-          - os: macos-13
-            file_name: "MobiDocEraser"
-            name: "macOS Intel"
 
     steps:
     - uses: actions/checkout@v4
