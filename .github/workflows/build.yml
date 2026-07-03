@@ -24,7 +24,7 @@ jobs:
           - os: macos-latest
             file_name: "MobiDocEraser"
             name: "macOS ARM"
-          - os: macos-13               # ← correction : runner Intel officiel
+          - os: macos-13
             file_name: "MobiDocEraser"
             name: "macOS Intel"
 
@@ -36,7 +36,6 @@ jobs:
       with:
         python-version: '3.11'
 
-    # --- Dépendances ---
     - name: Install Dependencies (Linux & macOS)
       if: runner.os != 'Windows'
       run: |
@@ -59,7 +58,6 @@ jobs:
       if: runner.os == 'macOS'
       run: brew install create-dmg
 
-    # --- Build Windows/Linux (avec exclusions et assume-yes) ---
     - name: Build with Nuitka (Windows/Linux)
       if: runner.os != 'macOS'
       shell: bash
@@ -87,7 +85,6 @@ jobs:
           $EXTRA \
           main.py
 
-    # --- Build macOS (avec exclusions et assume-yes) ---
     - name: Build with Nuitka (macOS)
       if: runner.os == 'macOS'
       env:
@@ -113,32 +110,35 @@ jobs:
           --output-dir=dist \
           main.py
 
-    # --- Package macOS DMG ---
     - name: Package macOS DMG
       if: runner.os == 'macOS'
       run: |
         cd dist
-        APP_NAME="${{ matrix.file_name }}.app"
-        if [ -d "$APP_NAME" ]; then
-          plutil -replace LSMinimumSystemVersion -string "10.13" "$APP_NAME/Contents/Info.plist"
-          codesign --force --deep --sign - "$APP_NAME"
-          create-dmg \
-            --volname "Mobi Doc Eraser" \
-            --window-pos 200 120 \
-            --window-size 600 300 \
-            --icon-size 100 \
-            --text-size 12 \
-            --hide-extension "$APP_NAME" \
-            --app-drop-link 450 140 \
-            --icon "$APP_NAME" 150 140 \
-            "${{ matrix.file_name }}.dmg" \
-            "$APP_NAME"
-        else
-          echo "❌ $APP_NAME not found"
+        echo "📂 Contenu de dist :"
+        ls -la
+
+        # Chercher un fichier .app (n'importe quel nom)
+        APP_NAME=$(find . -maxdepth 1 -type d -name "*.app" | head -1 | sed 's/^\.\///')
+        if [ -z "$APP_NAME" ]; then
+          echo "❌ Aucun .app trouvé dans dist/"
           exit 1
         fi
 
-    # --- Upload des artefacts ---
+        echo "✅ .app trouvé : $APP_NAME"
+        plutil -replace LSMinimumSystemVersion -string "10.13" "$APP_NAME/Contents/Info.plist"
+        codesign --force --deep --sign - "$APP_NAME"
+        create-dmg \
+          --volname "Mobi Doc Eraser" \
+          --window-pos 200 120 \
+          --window-size 600 300 \
+          --icon-size 100 \
+          --text-size 12 \
+          --hide-extension "$APP_NAME" \
+          --app-drop-link 450 140 \
+          --icon "$APP_NAME" 150 140 \
+          "${{ matrix.file_name }}.dmg" \
+          "$APP_NAME"
+
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
