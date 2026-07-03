@@ -1,10 +1,11 @@
-name: Build usbobliter8
+name: Build Mobi Doc Eraser Passcode V1.0
 
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -15,20 +16,50 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            file_name: "usbobliter8"
+            file_name: "MobiDocEraser"
             name: "Windows"
-
+          - os: ubuntu-latest
+            file_name: "MobiDocEraser"
+            name: "Linux"
+          - os: macos-latest
+            file_name: "MobiDocEraser"
+            name: "macOS ARM"
+          - os: macos-15
+            file_name: "MobiDocEraser"
+            name: "macOS Intel"
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
-    - name: Install Dependencies
-      run: pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller
+    - name: Install Dependencies (Linux & macOS)
+      if: runner.os != 'Windows'
+      run: |
+        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller certifi
+
+    - name: Install Dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller pywin32 certifi
+
+    # ---- Installation de libusb via Chocolatey (Windows) ----
+    - name: Install libusb DLL (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        choco install libusb -y
+        $dllPath = "C:\ProgramData\chocolatey\lib\libusb\tools\libusb-1.0.dll"
+        if (Test-Path $dllPath) {
+          Copy-Item $dllPath .
+          Write-Host "✅ libusb-1.0.dll copié"
+        } else {
+          Write-Host "❌ libusb-1.0.dll introuvable"
+          exit 1
+        }
 
     - name: Install libusb (macOS)
       if: runner.os == 'macOS'
@@ -38,7 +69,7 @@ jobs:
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev libudev-dev
 
-    - name: Install DMG Creator
+    - name: Install DMG Creator (macOS)
       if: runner.os == 'macOS'
       run: brew install create-dmg
 
@@ -49,9 +80,20 @@ jobs:
       run: |
         SEP=":"
         if [ "$RUNNER_OS" = "Windows" ]; then SEP=";"; fi
+        ICON_OPTION=""
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          ICON_OPTION="--icon logo.ico"
+        elif [ "$RUNNER_OS" = "macOS" ]; then
+          ICON_OPTION="--icon logo.icns"
+        fi
         pyinstaller --noconfirm --onefile --windowed \
           --name "${{ matrix.file_name }}" \
           --add-data "boot${SEP}boot" \
+          --add-data "logo.png${SEP}." \
+          --add-binary "libusb-1.0.dll${SEP}." \
+          $ICON_OPTION \
+          --collect-all pymobiledevice3 \
+          --collect-all certifi \
           --hidden-import "pymobiledevice3" \
           main.py
 
@@ -59,15 +101,21 @@ jobs:
       if: runner.os == 'macOS'
       run: |
         cd dist
-        plutil -replace LSMinimumSystemVersion -string "10.13" "${{ matrix.file_name }}.app/Contents/Info.plist"
-        codesign --force --deep --sign - "${{ matrix.file_name }}.app"
-        create-dmg --volname "usbobliter8" --window-pos 200 120 --window-size 600 300 --icon-size 100 --text-size 12 --hide-extension "${{ matrix.file_name }}.app" --app-drop-link 450 140 --icon "${{ matrix.file_name }}.app" 150 140 "${{ matrix.file_name }}.dmg" "${{ matrix.file_name }}.app"
+        APP_NAME="${{ matrix.file_name }}.app"
+        if [ -d "$APP_NAME" ]; then
+          plutil -replace LSMinimumSystemVersion -string "10.13" "$APP_NAME/Contents/Info.plist"
+          codesign --force --deep --sign - "$APP_NAME"
+          create-dmg --volname "Mobi Doc Eraser" --window-pos 200 120 --window-size 600 300 --icon-size 100 --text-size 12 --hide-extension "$APP_NAME" --app-drop-link 450 140 --icon "$APP_NAME" 150 140 "${{ matrix.file_name }}.dmg" "$APP_NAME"
+        else
+          echo "❌ .app not found in dist/"
+          exit 1
+        fi
 
     - name: Upload Artifacts
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.name }}
         path: |
           dist/*.dmg
           dist/*.exe
-          dist/usbobliter8
+          dist/${{ matrix.file_name }}
