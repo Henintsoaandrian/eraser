@@ -52,11 +52,11 @@ jobs:
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        # Télécharger l'archive ZIP depuis les releases officielles
-        curl -L -o libusb.zip "https://github.com/libusb/libusb/releases/download/v1.0.26/libusb-1.0.26.zip"
-        # Extraire avec Expand-Archive (intégré à PowerShell)
-        Expand-Archive -Path libusb.zip -DestinationPath . -Force
-        # Rechercher la DLL dans les sous-dossiers et la copier à la racine
+        # Téléchargement de l'archive 7z officielle
+        curl -L -o libusb.7z "https://github.com/libusb/libusb/releases/download/v1.0.26/libusb-1.0.26.7z"
+        # Extraction sans option -o (extrait dans le répertoire courant)
+        7z x libusb.7z -y
+        # Recherche récursive de la DLL et copie à la racine
         $dll = Get-ChildItem -Recurse -Filter "libusb-1.0.dll" | Select-Object -First 1
         if ($dll) {
           Copy-Item $dll.FullName .
