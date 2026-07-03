@@ -11,8 +11,18 @@ import urllib.request
 import urllib.parse
 from pathlib import Path
 
-import libusb_package  # <-- Solution définitive pour Windows
+# ===== Gestion libusb-package (SANS écraser usb.core.find) =====
+try:
+    import libusb_package
+    HAS_LIBUSB = True
+    print("✅ libusb-package chargé")
+except ImportError:
+    HAS_LIBUSB = False
+    print("ℹ️ libusb-package non disponible, utilisation de pyusb standard")
+
+import usb.core
 import usb.util
+
 from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtCore import QByteArray, QObject, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QPainter, QPixmap, QPainterPath
@@ -22,16 +32,10 @@ from PyQt5.QtWidgets import (
 )
 from pymobiledevice3.irecv import IRecv
 
-# ------------------------------------------------------------------
-# resource_path (compatible PyInstaller)
-# ------------------------------------------------------------------
 def resource_path(name):
     base = getattr(sys, '_MEIPASS', os.path.abspath('.'))
     return os.path.join(base, name)
 
-# ------------------------------------------------------------------
-# Fonction pour charger un pixmap net sur Retina / HiDPI
-# ------------------------------------------------------------------
 def load_retina_pixmap(path, display_size):
     screen = QApplication.primaryScreen()
     ratio = screen.devicePixelRatio() if screen else 1
@@ -42,14 +46,12 @@ def load_retina_pixmap(path, display_size):
         pix.setDevicePixelRatio(ratio)
     return pix
 
-# ------------------------------------------------------------------
-# Configuration
-# ------------------------------------------------------------------
 API_URL = "https://api.mobidocserver.com/eraser_passcode/validate_ecid.php"
 TELEGRAM_REPORT_URL = "https://api.mobidocserver.com/eraser_passcode/telegramreport_ecid.php"
 
 APPLE_VENDOR_ID = 0x05AC
 DFU_PRODUCT_ID = 0x1227
+RECOVERY_PRODUCT_ID = 0x1281
 DFU_DNLOAD = 1
 DFU_ABORT = 4
 CUSTOM_BOOT = 8
@@ -77,7 +79,6 @@ DEVICES = {
 
 IBEC_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "boot"
 
-# --- Theme palette ---
 BG_PAGE      = "#141F2E"
 BG_CARD      = "#16212F"
 BG_SUBCARD   = "#111B27"
@@ -100,7 +101,6 @@ STEPS = [
     "Sending obliteration commands",
 ]
 
-# --- SVG Icons (fallback) ---
 _ICON_TEMPLATE = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
     'fill="none" stroke="{color}" stroke-width="1.8" '
@@ -141,25 +141,67 @@ def render_icon(name, color, size=20):
     painter.end()
     return pixmap
 
-# ------------------------------------------------------------------
-# DFU utilities (avec libusb-package)
-# ------------------------------------------------------------------
+# ======================================================================
+# DFU utilities
+# ======================================================================
 def _dfu_serial(dispose=False):
-    """Recherche le périphérique DFU avec libusb-package (embarque la DLL)."""
-    # Utilisation de libusb_package.find() au lieu de usb.core.find()
-    dev = libusb_package.find(idVendor=APPLE_VENDOR_ID, idProduct=DFU_PRODUCT_ID)
-    if dev is None:
+    try:
+        if HAS_LIBUSB:
+            dev = libusb_package.find(
+                idVendor=APPLE_VENDOR_ID,
+                idProduct=DFU_PRODUCT_ID
+            )
+        else:
+            dev = usb.core.find(
+                idVendor=APPLE_VENDOR_ID,
+                idProduct=DFU_PRODUCT_ID
+            )
+
+        if dev is None:
+            return None, None
+
+    except Exception as e:
+        print(f"Erreur de détection DFU: {e}")
         return None, None
+
     try:
         serial = dev.serial_number or ""
+        if isinstance(serial, bytes):
+            serial = serial.decode("utf-8", errors="ignore")
     except Exception:
         serial = ""
+
+    # DEBUG : affiche la valeur brute du serial
+    print(f"🔍 SERIAL RAW = {repr(serial)}")
+
     if dispose:
-        libusb_package.util.dispose_resources(dev)
+        try:
+            usb.util.dispose_resources(dev)
+        except Exception:
+            pass
+
     return dev, serial
 
+def _recovery_find():
+    """Recherche le périphérique en mode recovery."""
+    try:
+        if HAS_LIBUSB:
+            return libusb_package.find(
+                idVendor=APPLE_VENDOR_ID,
+                idProduct=RECOVERY_PRODUCT_ID
+            )
+        else:
+            return usb.core.find(
+                idVendor=APPLE_VENDOR_ID,
+                idProduct=RECOVERY_PRODUCT_ID
+            )
+    except Exception:
+        return None
+
 def _serial_field(serial, key):
-    for part in (serial or "").split():
+    if not serial:
+        return None
+    for part in serial.split():
         if part.startswith(f"{key}:"):
             return part.split(":", 1)[1]
     return None
@@ -187,9 +229,7 @@ def dfu_boot(dev):
         pass
     usb.util.dispose_resources(dev)
 
-# ------------------------------------------------------------------
-# API & Telegram (SSL)
-# ------------------------------------------------------------------
+# ===== API & Telegram =====
 def check_ecid_online(ecid):
     if not ecid:
         return False
@@ -229,9 +269,7 @@ def send_telegram_report(status, ecid, model):
     except Exception:
         return False
 
-# ------------------------------------------------------------------
-# Dialogs
-# ------------------------------------------------------------------
+# ===== Dialogues (Success, Register) =====
 class SuccessDialog(QDialog):
     def __init__(self, parent=None, device_model=None):
         super().__init__(parent)
@@ -365,9 +403,7 @@ class RegisterDialog(QDialog):
         btn_row.addWidget(btn_ok)
         layout.addLayout(btn_row)
 
-# ------------------------------------------------------------------
-# Detector
-# ------------------------------------------------------------------
+# ===== Detector =====
 class Detector(QObject):
     detected = pyqtSignal(object)
 
@@ -400,9 +436,7 @@ class Detector(QObject):
             while not self._stop and time.time() < end:
                 time.sleep(0.1)
 
-# ------------------------------------------------------------------
-# Worker
-# ------------------------------------------------------------------
+# ===== Worker (avec logs détaillés) =====
 class Obliter8Worker(QObject):
     step = pyqtSignal(str)
     finished_ok = pyqtSignal()
@@ -413,37 +447,83 @@ class Obliter8Worker(QObject):
 
     def _run(self):
         try:
+            print("🔍 Récupération du périphérique DFU...")
             dev, serial = _dfu_serial()
+            if dev is None:
+                raise Exception("DFU device not found")
+
+            print(f"📋 Serial: {serial}")
             cpid = _serial_field(serial, "CPID")
+            if cpid is None:
+                raise Exception(f"CPID not found in serial: {serial}")
+            print(f"📱 CPID: {cpid}")
+
             entry = identify(f"0x{cpid.lower()}", _serial_field(serial, "BDID"))
+            if entry is None:
+                raise Exception(f"Device not supported (CPID: {cpid})")
+
+            name, codename = entry
+            print(f"✅ Device identified: {name} ({codename})")
+
             ecid_hex = _serial_field(serial, "ECID")
             ecid = int(ecid_hex, 16) if ecid_hex else None
+            print(f"🔑 ECID: {ecid}")
 
-            ibec_path = ibec_path_for(entry[1])
+            ibec_path = ibec_path_for(codename)
+            print(f"📂 iBEC path: {ibec_path}")
+            if not ibec_path.exists():
+                raise Exception(f"iBEC file not found: {ibec_path}")
+
+            print("📤 Uploading iBEC...")
             self.step.emit(f"Uploading {ibec_path.name}...")
             dfu_upload(dev, ibec_path.read_bytes())
+
+            print("🚀 Booting iBEC...")
             self.step.emit("Booting iBEC...")
             dfu_boot(dev)
 
+            # ---- Attente du mode recovery ----
+            print("⏳ Waiting for recovery mode...")
             self.step.emit("Waiting for recovery mode...")
-            irecv = IRecv(ecid=ecid, is_recovery=True, timeout=60)
+            recovery_found = False
+            for i in range(30):
+                time.sleep(1)
+                rec_dev = _recovery_find()
+                if rec_dev is not None:
+                    recovery_found = True
+                    print(f"✅ Recovery device found after {i+1} seconds")
+                    break
+                print(f"⏳ Recovery not found, waiting... ({i+1}/30)")
 
+            if not recovery_found:
+                raise Exception("Recovery device not found after iBEC boot")
+
+            print("🔗 Connecting to recovery...")
+            self.step.emit("Connecting to recovery...")
+            irecv = IRecv(ecid=ecid, is_recovery=True, timeout=120)
+
+            print("📝 Sending obliteration commands...")
             self.step.emit("Sending obliteration commands...")
             for cmd in ("setenv oblit-inprogress 5",
                         "setenv auto-boot true",
                         "saveenv"):
+                print(f"  ➜ Sending: {cmd}")
                 irecv.send_command(cmd)
+
             try:
+                print("🔄 Rebooting...")
                 irecv.send_command("reboot")
             except Exception:
                 pass
+
+            print("✅ Process finished successfully!")
             self.finished_ok.emit()
+
         except Exception as e:
+            print(f"❌ ERROR: {e}")
             self.failed.emit(str(e))
 
-# ------------------------------------------------------------------
-# Custom widgets
-# ------------------------------------------------------------------
+# ===== Custom widgets =====
 class CopyableLabel(QLabel):
     def __init__(self):
         super().__init__("\u2013")
@@ -492,9 +572,7 @@ class Badge(QFrame):
             self._icon_lbl.clear()
             self._icon_lbl.hide()
 
-# ------------------------------------------------------------------
-# MainWindow
-# ------------------------------------------------------------------
+# ===== MainWindow =====
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -528,9 +606,6 @@ class MainWindow(QMainWindow):
         self._detector.detected.connect(self._on_detected)
         self._show_device("Waiting for device...", None, False)
 
-    # ------------------------------------------------------------------
-    # UI
-    # ------------------------------------------------------------------
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -695,9 +770,6 @@ class MainWindow(QMainWindow):
             }}
         """)
 
-    # ------------------------------------------------------------------
-    # Device state
-    # ------------------------------------------------------------------
     def _show_device(self, name, sub, pwnd, pwnd_known=True, can_run=False, error=False):
         self.name_lbl.setText(name)
         self.name_lbl.setStyleSheet(f"color:{RED};" if error else "")
@@ -750,7 +822,6 @@ class MainWindow(QMainWindow):
         self._ibec_ok = ibec_path_for(codename).is_file()
         self._device_supported = True
 
-        # Lancer la vérification ECID (asynchrone)
         if ecid:
             self._check_ecid(ecid)
         else:
@@ -773,11 +844,7 @@ class MainWindow(QMainWindow):
         else:
             self.step_lbl.setText("❌ ECID not registered")
 
-    # ------------------------------------------------------------------
-    # Run
-    # ------------------------------------------------------------------
     def _start(self):
-        # Si la vérification ECID n'est pas encore faite, on la fait maintenant (synchrone)
         if self._ecid_valid is None:
             self.step_lbl.setText("⏳ Checking ECID...")
             valid = check_ecid_online(self._current_ecid)
@@ -792,7 +859,6 @@ class MainWindow(QMainWindow):
             dlg.exec_()
             return
 
-        # ECID valide, on lance le processus
         self._detector._paused = True
         self._busy = True
         self._step_index = -1
@@ -834,7 +900,6 @@ class MainWindow(QMainWindow):
         self.step_lbl.setText(status)
         if ok:
             self.progress.setValue(len(STEPS))
-            # On ne remet pas "Ready" pour que le statut final reste visible
         else:
             QTimer.singleShot(3000, lambda: self.step_lbl.setText("Ready"))
         if msg and not ok:
@@ -844,9 +909,7 @@ class MainWindow(QMainWindow):
         self._detector._stop = True
         event.accept()
 
-# ------------------------------------------------------------------
-# Entry point
-# ------------------------------------------------------------------
+# ===== Entry point =====
 def main():
     app = QApplication(sys.argv)
     win = MainWindow()
