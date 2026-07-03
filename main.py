@@ -15,10 +15,11 @@ import usb
 import usb.util
 from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtCore import QByteArray, QObject, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QIcon, QPainter, QPixmap, QPainterPath
+from PyQt5.QtGui import QIcon, QPainter, QPixmap, QPainterPath, QTextCursor
 from PyQt5.QtWidgets import (
     QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
     QMessageBox, QProgressBar, QPushButton, QVBoxLayout, QWidget, QDialog,
+    QTextEdit,
 )
 from pymobiledevice3.irecv import IRecv
 
@@ -93,6 +94,7 @@ GREEN_BG     = "#173c33"
 RED          = "#F09595"
 RED_BG       = "#3c1a1a"
 MONO_FONT    = "Menlo, Consolas, monospace"
+LOG_BG       = "#0D121C"
 
 STEPS = [
     "Uploading",
@@ -187,7 +189,7 @@ def _dfu_serial(dispose=False):
     return dev, serial
 
 # ------------------------------------------------------------------
-# API & Telegram
+# API & Telegram (avec SSL)
 # ------------------------------------------------------------------
 def check_ecid_online(ecid):
     if not ecid:
@@ -509,10 +511,10 @@ class MainWindow(QMainWindow):
                     self.setWindowIcon(QIcon(alt_path))
                     break
 
-        self.resize(420, 380)
+        self.resize(460, 520)  # agrandi pour le log
         self._busy = False
         self._step_index = -1
-        self._ecid_valid = None  # None = pas encore vérifié, True/False = résultat
+        self._ecid_valid = None
         self._current_ecid = None
         self._current_model = None
         self._pwnd = False
@@ -526,6 +528,16 @@ class MainWindow(QMainWindow):
         self._detector = Detector()
         self._detector.detected.connect(self._on_detected)
         self._show_device("Waiting for device...", None, False)
+        self.log("Application started. Waiting for device...")
+
+    # ---- Logging ----
+    def log(self, message):
+        timestamp = time.strftime("%H:%M:%S")
+        self.log_area.append(f"[{timestamp}] {message}")
+        # Scroll automatiquement vers le bas
+        cursor = self.log_area.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.log_area.setTextCursor(cursor)
 
     # ------------------------------------------------------------------
     # UI
@@ -543,7 +555,7 @@ class MainWindow(QMainWindow):
         card_l.setContentsMargins(20, 18, 20, 20)
         card_l.setSpacing(16)
 
-        # Header avec logo net
+        # Header
         header = QHBoxLayout()
         header.setSpacing(10)
 
@@ -619,7 +631,7 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         card_l.addWidget(self.progress)
 
-        # Run button (éclairci)
+        # Run button
         self.run_btn = QPushButton("Eraser")
         self.run_btn.setObjectName("runBtn")
         self.run_btn.setFixedHeight(44)
@@ -627,6 +639,29 @@ class MainWindow(QMainWindow):
         self.run_btn.setEnabled(False)
         self.run_btn.clicked.connect(self._start)
         card_l.addWidget(self.run_btn)
+
+        # ---- Log area (AJOUT) ----
+        log_label = QLabel("Log")
+        log_label.setObjectName("subLbl")
+        log_label.setStyleSheet("color: #9BC2D4; font-weight: bold;")
+        card_l.addWidget(log_label)
+
+        self.log_area = QTextEdit()
+        self.log_area.setObjectName("logArea")
+        self.log_area.setReadOnly(True)
+        self.log_area.setMaximumHeight(150)
+        self.log_area.setStyleSheet(f"""
+            QTextEdit#logArea {{
+                background-color: {LOG_BG};
+                color: #8AA8C7;
+                border: 1px solid {BORDER};
+                border-radius: 6px;
+                font-family: {MONO_FONT};
+                font-size: 10px;
+                padding: 4px;
+            }}
+        """)
+        card_l.addWidget(self.log_area)
 
         outer.addWidget(card)
         outer.addStretch(1)
@@ -713,7 +748,6 @@ class MainWindow(QMainWindow):
                 self.pwnd_badge.set_state("NOT PWNED", RED, RED_BG, "lock-closed")
         else:
             self.pwnd_badge.set_state(" ", TEXT_MUTED, BG_SUBCARD)
-        # Le bouton est activé immédiatement (sans attendre la validation ECID)
         self.run_btn.setEnabled(can_run and not self._busy)
 
     def _on_detected(self, info):
@@ -729,6 +763,7 @@ class MainWindow(QMainWindow):
             self._ibec_ok = False
             self._device_supported = False
             self.run_btn.setEnabled(False)
+            self.log("Device disconnected.")
             return
 
         cpid, bdid, ecid, pwnd = info
@@ -748,6 +783,7 @@ class MainWindow(QMainWindow):
             self._ibec_ok = False
             self._device_supported = False
             self.run_btn.setEnabled(False)
+            self.log(f"Unsupported device: {label}")
             return
 
         name, codename = entry
@@ -755,13 +791,13 @@ class MainWindow(QMainWindow):
         self._ibec_ok = ibec_path_for(codename).is_file()
         self._device_supported = True
 
-        # Lancer la vérification ECID (asynchrone)
         if ecid:
+            self.log(f"Device detected: {name} (ECID: {ecid})")
             self._check_ecid(ecid)
         else:
             self._ecid_valid = False
+            self.log("ECID not found for this device.")
 
-        # Activer le bouton si l'appareil est supporté, PWND et iBEC présent
         can_run = pwnd and self._ibec_ok
         self._show_device(name, f"CPID:{cpid} BDID:{bdid}", pwnd, can_run=can_run)
         self.target_val.setText(codename)
@@ -776,30 +812,37 @@ class MainWindow(QMainWindow):
         self._ecid_valid = valid
         if valid:
             self.step_lbl.setText("✅ ECID valid")
+            self.log("ECID validation: OK")
         else:
             self.step_lbl.setText("❌ ECID not registered")
-        # Ne pas modifier l'état du bouton ici
+            self.log("ECID validation: FAILED (not registered)")
 
     # ------------------------------------------------------------------
     # Run
     # ------------------------------------------------------------------
     def _start(self):
+        self.log("User clicked 'Eraser'")
         # Si la vérification ECID n'est pas encore faite, on la fait maintenant (synchrone)
         if self._ecid_valid is None:
             self.step_lbl.setText("⏳ Checking ECID...")
+            self.log("Waiting for ECID validation...")
             valid = check_ecid_online(self._current_ecid)
             self._ecid_valid = valid
             if valid:
                 self.step_lbl.setText("✅ ECID valid")
+                self.log("ECID validation: OK")
             else:
                 self.step_lbl.setText("❌ ECID not registered")
+                self.log("ECID validation: FAILED")
 
         if not self._ecid_valid:
+            self.log("Showing registration dialog.")
             dlg = RegisterDialog(self, ecid=self._current_ecid)
             dlg.exec_()
             return
 
         # ECID valide, on lance le processus
+        self.log("Starting obliteration process...")
         self._detector._paused = True
         self._busy = True
         self._step_index = -1
@@ -816,11 +859,13 @@ class MainWindow(QMainWindow):
 
     def _on_step(self, text):
         self.step_lbl.setText(text)
+        self.log(text)
         self._step_index = min(self._step_index + 1, len(STEPS) - 1)
         self.progress.setValue(self._step_index + 1)
         self.step_count_lbl.setText(f"Étape {self._step_index + 1} / {len(STEPS)}")
 
     def _on_finished_ok(self):
+        self.log("✅ Process finished successfully!")
         ecid = self._current_ecid or "N/A"
         model = self._current_model or "N/A"
         send_telegram_report("✅ Device Erased successfully!", ecid, model)
@@ -828,12 +873,13 @@ class MainWindow(QMainWindow):
         dlg = SuccessDialog(self, device_model=model)
         dlg.exec_()
 
-        self._finish("Terminé", ok=True)
+        self._finish("Terminé ✅", ok=True)
 
     def _on_failed(self, msg):
+        self.log(f"❌ Process failed: {msg}")
         QMessageBox.critical(self, "Mobi Doc Eraser Passcode V1.0", f"Erase failed:\n{msg}")
         send_telegram_report(f"❌ Erase failed: {msg}", self._current_ecid or "N/A", self._current_model or "N/A")
-        self._finish("Échec", ok=False, msg=msg)
+        self._finish("Échec ❌", ok=False, msg=msg)
 
     def _finish(self, status, ok, msg=None):
         self._busy = False
@@ -841,7 +887,9 @@ class MainWindow(QMainWindow):
         self.step_lbl.setText(status)
         if ok:
             self.progress.setValue(len(STEPS))
-        QTimer.singleShot(3000, lambda: self.step_lbl.setText("Ready"))
+            # On NE remet PAS "Ready" en cas de succès, on garde le statut final
+        else:
+            QTimer.singleShot(3000, lambda: self.step_lbl.setText("Ready"))
         if msg and not ok:
             QMessageBox.critical(self, "Mobi Doc Eraser Passcode", msg)
 
