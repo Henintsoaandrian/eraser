@@ -5,6 +5,8 @@ import os
 import threading
 import time
 import json
+import ssl
+import certifi
 import urllib.request
 import urllib.parse
 from pathlib import Path
@@ -31,11 +33,6 @@ def resource_path(name):
 # Fonction pour charger un pixmap net sur Retina / HiDPI
 # ------------------------------------------------------------------
 def load_retina_pixmap(path, display_size):
-    """
-    Charge un QPixmap depuis un fichier et le redimensionne
-    pour un affichage Retina (ou HiDPI) sans perte de netteté.
-    display_size : taille d'affichage souhaitée en points (ex: 40, 72)
-    """
     screen = QApplication.primaryScreen()
     ratio = screen.devicePixelRatio() if screen else 1
     target_size = int(display_size * ratio)
@@ -61,7 +58,6 @@ DFU_TRANSFER_SIZE = 0x800
 
 SUPPORTED_CPIDS = {"0x8020", "0x8030"}
 
-# (cpid, bdid) -> (name, iBoot codename)
 DEVICES = {
     ("0x8020", 0x0A): ("iPhone XS Max", "d331"),
     ("0x8020", 0x0C): ("iPhone XR", "n841"),
@@ -97,14 +93,9 @@ RED          = "#F09595"
 RED_BG       = "#3c1a1a"
 MONO_FONT    = "Menlo, Consolas, monospace"
 
-STEPS = [
-    "Uploading",
-    "Booting iBEC",
-    "Waiting for recovery mode",
-    "Sending obliteration commands",
-]
+STEPS = ["Uploading", "Booting iBEC", "Waiting for recovery mode", "Sending obliteration commands"]
 
-# --- SVG Icons (fallback) ---
+# --- SVG Icons ---
 _ICON_TEMPLATE = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
     'fill="none" stroke="{color}" stroke-width="1.8" '
@@ -197,7 +188,8 @@ def check_ecid_online(ecid):
         return False
     try:
         url = f"{API_URL}?ecid={urllib.parse.quote(ecid)}"
-        with urllib.request.urlopen(url, timeout=5) as response:
+        context = ssl.create_default_context(cafile=certifi.where())
+        with urllib.request.urlopen(url, timeout=5, context=context) as response:
             data = json.loads(response.read().decode())
             return data.get("valid", False)
     except Exception:
@@ -205,7 +197,8 @@ def check_ecid_online(ecid):
 
 def get_location():
     try:
-        req = urllib.request.urlopen("http://ip-api.com/json/", timeout=3)
+        context = ssl.create_default_context(cafile=certifi.where())
+        req = urllib.request.urlopen("http://ip-api.com/json/", timeout=3, context=context)
         data = json.loads(req.read().decode())
         return f"{data.get('city', '')}, {data.get('country', '')}"
     except Exception:
@@ -223,7 +216,8 @@ def send_telegram_report(status, ecid, model):
         }
         post_data = urllib.parse.urlencode(data).encode()
         req = urllib.request.Request(TELEGRAM_REPORT_URL, data=post_data, method="POST")
-        with urllib.request.urlopen(req, timeout=5) as response:
+        context = ssl.create_default_context(cafile=certifi.where())
+        with urllib.request.urlopen(req, timeout=5, context=context) as response:
             return response.read().decode() == "ok"
     except Exception:
         return False
@@ -543,7 +537,6 @@ class MainWindow(QMainWindow):
         card_l.setContentsMargins(20, 18, 20, 20)
         card_l.setSpacing(16)
 
-        # Header avec logo net
         header = QHBoxLayout()
         header.setSpacing(10)
 
@@ -582,7 +575,6 @@ class MainWindow(QMainWindow):
         header.addWidget(self.pwnd_badge, alignment=Qt.AlignTop)
         card_l.addLayout(header)
 
-        # Info subcard
         info = QFrame()
         info.setObjectName("subcard")
         grid = QGridLayout(info)
@@ -601,7 +593,6 @@ class MainWindow(QMainWindow):
         self.mode_val.setText("DFU")
         card_l.addWidget(info)
 
-        # Progress
         prog_head = QHBoxLayout()
         self.step_lbl = QLabel("Ready")
         self.step_lbl.setObjectName("subLbl")
@@ -619,7 +610,6 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         card_l.addWidget(self.progress)
 
-        # Run button (éclairci)
         self.run_btn = QPushButton("Eraser")
         self.run_btn.setObjectName("runBtn")
         self.run_btn.setFixedHeight(44)
@@ -631,7 +621,6 @@ class MainWindow(QMainWindow):
         outer.addWidget(card)
         outer.addStretch(1)
 
-        # Footer
         footer = QHBoxLayout()
         footer.addStretch(1)
         tg_icon = QLabel()
@@ -713,6 +702,8 @@ class MainWindow(QMainWindow):
                 self.pwnd_badge.set_state("NOT PWNED", RED, RED_BG, "lock-closed")
         else:
             self.pwnd_badge.set_state(" ", TEXT_MUTED, BG_SUBCARD)
+        # Le bouton est activé UNIQUEMENT si l'appareil est supporté, PWND et iBEC présent
+        # (pas de condition sur _ecid_valid ici)
         self.run_btn.setEnabled(can_run and not self._busy)
 
     def _on_detected(self, info):
@@ -760,8 +751,8 @@ class MainWindow(QMainWindow):
         else:
             self._ecid_valid = False
 
-        # Le bouton est activé si le device est supporté, PWND et iBEC présent
-        # On ne tient pas compte de _ecid_valid pour l'activation, car on veut que le bouton soit cliquable
+        # Le bouton est activé si l'appareil est supporté, PWND et iBEC présent
+        # (indépendamment de _ecid_valid)
         can_run = pwnd and self._ibec_ok
         self._show_device(name, f"CPID:{cpid} BDID:{bdid}", pwnd, can_run=can_run)
         self.target_val.setText(codename)
@@ -769,14 +760,14 @@ class MainWindow(QMainWindow):
     def _check_ecid(self, ecid):
         def task():
             valid = check_ecid_online(ecid)
-            # Mettre à jour sur le thread principal
+            # Mise à jour sur le thread principal
             QTimer.singleShot(0, lambda: self._update_ecid_status(valid))
         threading.Thread(target=task, daemon=True).start()
 
     def _update_ecid_status(self, valid):
         self._ecid_valid = valid
-        can_run = self._pwnd and self._ibec_ok and self._ecid_valid
-        self.run_btn.setEnabled(can_run and not self._busy)
+        # On n'active pas le bouton ici car il est déjà géré par _show_device
+        # Mais on peut afficher un message de statut
         if valid:
             self.step_lbl.setText("✅ ECID valid")
         else:
@@ -788,7 +779,6 @@ class MainWindow(QMainWindow):
     def _start(self):
         # Vérifier d'abord si l'ECID est valide
         if self._ecid_valid is None:
-            # La vérification n'est pas encore terminée
             QMessageBox.warning(self, "Vérification en cours", "Veuillez patienter, la vérification ECID est en cours.")
             return
 
@@ -824,14 +814,12 @@ class MainWindow(QMainWindow):
         model = self._current_model or "N/A"
         send_telegram_report("✅ Device Erased successfully!", ecid, model)
 
-        # Popup succès
         dlg = SuccessDialog(self, device_model=model)
         dlg.exec_()
 
         self._finish("Terminé", ok=True)
 
     def _on_failed(self, msg):
-        # Popup erreur
         QMessageBox.critical(self, "Mobi Doc Eraser Passcode V1.0", f"Erase failed:\n{msg}")
         send_telegram_report(f"❌ Erase failed: {msg}", self._current_ecid or "N/A", self._current_model or "N/A")
         self._finish("Échec", ok=False, msg=msg)
