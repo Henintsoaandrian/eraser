@@ -24,7 +24,7 @@ jobs:
           - os: macos-latest
             file_name: "MobiDocEraser"
             name: "macOS ARM"
-          - os: macos-15           
+          - os: macos-15              # Intel officiel
             file_name: "MobiDocEraser"
             name: "macOS Intel"
 
