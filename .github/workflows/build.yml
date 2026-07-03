@@ -5,7 +5,6 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch:
 
 jobs:
   build:
@@ -24,44 +23,21 @@ jobs:
           - os: macos-latest
             file_name: "MobiDocEraser"
             name: "macOS ARM"
-          - os: macos-13
+          - os: macos-15-intel
             file_name: "MobiDocEraser"
             name: "macOS Intel"
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: '3.11'
 
-    - name: Install Dependencies (Linux & macOS)
-      if: runner.os != 'Windows'
-      run: |
-        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller certifi
-
-    - name: Install Dependencies (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller pywin32 certifi
-
-    # ---- Téléchargement et extraction de libusb (Windows) ----
-    - name: Download libusb DLL (Windows)
-      if: runner.os == 'Windows'
-      shell: pwsh
-      run: |
-        curl -L -o libusb.7z "https://github.com/libusb/libusb/releases/download/v1.0.26/libusb-1.0.26.7z"
-        7z x libusb.7z -o. -y
-        # Recherche récursive de la DLL et copie dans le répertoire courant
-        $dll = Get-ChildItem -Recurse -Filter "libusb-1.0.dll" | Select-Object -First 1
-        if ($dll) {
-          Copy-Item $dll.FullName .
-          Write-Host "✅ libusb-1.0.dll copié depuis $($dll.FullName)"
-        } else {
-          Write-Host "❌ libusb-1.0.dll introuvable"
-          exit 1
-        }
+    # ---- AJOUT : dépendances supplémentaires ----
+    - name: Install Dependencies
+      run: pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller certifi pywin32
 
     - name: Install libusb (macOS)
       if: runner.os == 'macOS'
@@ -71,57 +47,34 @@ jobs:
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev libudev-dev
 
-    - name: Install DMG Creator (macOS)
+    - name: Install DMG Creator
       if: runner.os == 'macOS'
       run: brew install create-dmg
 
-    # ---- Build macOS ----
-    - name: Build with PyInstaller (macOS)
-      if: runner.os == 'macOS'
+    - name: Build with PyInstaller
       env:
         MACOSX_DEPLOYMENT_TARGET: "10.13"
-      run: |
-        pyinstaller --noconfirm --windowed \
-          --name "${{ matrix.file_name }}" \
-          --add-data "boot:boot" \
-          --add-data "logo.png:." \
-          --add-data "logo.icns:." \
-          --icon "logo.icns" \
-          --collect-all pymobiledevice3 \
-          --collect-all certifi \
-          --hidden-import pymobiledevice3 \
-          main.py
-
-    # ---- Build Windows (avec inclusion de la DLL) ----
-    - name: Build with PyInstaller (Windows)
-      if: runner.os == 'Windows'
       shell: bash
       run: |
+        SEP=":"
+        if [ "$RUNNER_OS" = "Windows" ]; then SEP=";"; fi
+        # ---- AJOUT : icône selon l'OS ----
+        ICON_OPTION=""
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          ICON_OPTION="--icon logo.ico"
+        elif [ "$RUNNER_OS" = "macOS" ]; then
+          ICON_OPTION="--icon logo.icns"
+        fi
         pyinstaller --noconfirm --onefile --windowed \
           --name "${{ matrix.file_name }}" \
-          --add-data "boot;boot" \
-          --add-data "logo.png;." \
-          --add-binary "libusb-1.0.dll;." \
-          --icon "logo.ico" \
+          --add-data "boot${SEP}boot" \
+          --add-data "logo.png${SEP}." \
+          $ICON_OPTION \
           --collect-all pymobiledevice3 \
           --collect-all certifi \
-          --hidden-import pymobiledevice3 \
+          --hidden-import "pymobiledevice3" \
           main.py
 
-    # ---- Build Linux ----
-    - name: Build with PyInstaller (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        pyinstaller --noconfirm --onefile --windowed \
-          --name "${{ matrix.file_name }}" \
-          --add-data "boot:boot" \
-          --add-data "logo.png:." \
-          --collect-all pymobiledevice3 \
-          --collect-all certifi \
-          --hidden-import pymobiledevice3 \
-          main.py
-
-    # ---- Package macOS DMG ----
     - name: Package macOS DMG
       if: runner.os == 'macOS'
       run: |
@@ -130,25 +83,14 @@ jobs:
         if [ -d "$APP_NAME" ]; then
           plutil -replace LSMinimumSystemVersion -string "10.13" "$APP_NAME/Contents/Info.plist"
           codesign --force --deep --sign - "$APP_NAME"
-          create-dmg \
-            --volname "Mobi Doc Eraser" \
-            --window-pos 200 120 \
-            --window-size 600 300 \
-            --icon-size 100 \
-            --text-size 12 \
-            --hide-extension "$APP_NAME" \
-            --app-drop-link 450 140 \
-            --icon "$APP_NAME" 150 140 \
-            "${{ matrix.file_name }}.dmg" \
-            "$APP_NAME"
+          create-dmg --volname "Mobi Doc Eraser" --window-pos 200 120 --window-size 600 300 --icon-size 100 --text-size 12 --hide-extension "$APP_NAME" --app-drop-link 450 140 --icon "$APP_NAME" 150 140 "${{ matrix.file_name }}.dmg" "$APP_NAME"
         else
           echo "❌ .app not found in dist/"
           exit 1
         fi
 
-    # ---- Upload des artefacts ----
     - name: Upload Artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: ${{ matrix.name }}
         path: |
