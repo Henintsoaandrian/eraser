@@ -36,35 +36,15 @@ jobs:
       with:
         python-version: '3.11'
 
-    # ---- Dépendances (séparées par OS) ----
     - name: Install Dependencies (Linux & macOS)
       if: runner.os != 'Windows'
       run: |
-        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller certifi
+        pip install PyQt5 pymobiledevice3==7.8.3 libusb-package pyinstaller certifi
 
     - name: Install Dependencies (Windows)
       if: runner.os == 'Windows'
       run: |
-        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller pywin32 certifi
-
-    # ---- Récupération de libusb-1.0.dll pour Windows (méthode fiable) ----
-    - name: Download libusb DLL (Windows)
-      if: runner.os == 'Windows'
-      shell: pwsh
-      run: |
-        # Téléchargement de l'archive 7z officielle
-        curl -L -o libusb.7z "https://github.com/libusb/libusb/releases/download/v1.0.26/libusb-1.0.26.7z"
-        # Extraction sans option -o (extrait dans le répertoire courant)
-        7z x libusb.7z -y
-        # Recherche récursive de la DLL et copie à la racine
-        $dll = Get-ChildItem -Recurse -Filter "libusb-1.0.dll" | Select-Object -First 1
-        if ($dll) {
-          Copy-Item $dll.FullName .
-          Write-Host "✅ libusb-1.0.dll extrait avec succès"
-        } else {
-          Write-Host "❌ libusb-1.0.dll introuvable"
-          exit 1
-        }
+        pip install PyQt5 pymobiledevice3==7.8.3 libusb-package pyinstaller pywin32 certifi
 
     - name: Install libusb (macOS)
       if: runner.os == 'macOS'
@@ -78,7 +58,6 @@ jobs:
       if: runner.os == 'macOS'
       run: brew install create-dmg
 
-    # ---- Build avec PyInstaller (adapté à chaque OS) ----
     - name: Build with PyInstaller
       env:
         MACOSX_DEPLOYMENT_TARGET: "10.13"
@@ -92,23 +71,17 @@ jobs:
         elif [ "$RUNNER_OS" = "macOS" ]; then
           ICON_OPTION="--icon logo.icns"
         fi
-        # Option d'inclusion de la DLL (uniquement pour Windows)
-        BINARY_OPTION=""
-        if [ "$RUNNER_OS" = "Windows" ]; then
-          BINARY_OPTION="--add-binary libusb-1.0.dll${SEP}."
-        fi
         pyinstaller --noconfirm --onefile --windowed \
           --name "${{ matrix.file_name }}" \
           --add-data "boot${SEP}boot" \
           --add-data "logo.png${SEP}." \
-          $BINARY_OPTION \
           $ICON_OPTION \
           --collect-all pymobiledevice3 \
+          --collect-all libusb-package \
           --collect-all certifi \
           --hidden-import "pymobiledevice3" \
           main.py
 
-    # ---- Packaging macOS DMG ----
     - name: Package macOS DMG
       if: runner.os == 'macOS'
       run: |
@@ -123,7 +96,6 @@ jobs:
           exit 1
         fi
 
-    # ---- Upload des artefacts ----
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
