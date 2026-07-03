@@ -24,7 +24,7 @@ jobs:
           - os: macos-latest
             file_name: "MobiDocEraser"
             name: "macOS ARM"
-          - os: macos-15-intel       # ← conservé comme demandé
+          - os: macos-15-intel
             file_name: "MobiDocEraser"
             name: "macOS Intel"
 
@@ -36,7 +36,7 @@ jobs:
       with:
         python-version: '3.11'
 
-    # --- Dépendances (sans pywin32 sur non-Windows) ---
+    # --- Dépendances ---
     - name: Install Dependencies (Linux & macOS)
       if: runner.os != 'Windows'
       run: |
@@ -59,7 +59,7 @@ jobs:
       if: runner.os == 'macOS'
       run: brew install create-dmg
 
-    # --- Build avec Nuitka (Windows/Linux) ---
+    # --- Build Windows/Linux ---
     - name: Build with Nuitka (Windows/Linux)
       if: runner.os != 'macOS'
       shell: bash
@@ -77,12 +77,13 @@ jobs:
           --include-data-file=logo.png=logo.png \
           --include-package=pymobiledevice3 \
           --include-package=usb \
+          --assume-yes-for-downloads \
           --output-dir=dist \
           --output-filename="$NAME" \
           $EXTRA \
           main.py
 
-    # --- Build avec Nuitka (macOS) ---
+    # --- Build macOS (avec assume-yes et exclusion DLL) ---
     - name: Build with Nuitka (macOS)
       if: runner.os == 'macOS'
       env:
@@ -97,6 +98,7 @@ jobs:
           --include-data-file=logo.icns=logo.icns \
           --include-package=pymobiledevice3 \
           --include-package=usb \
+          --assume-yes-for-downloads \
           --macos-create-app-bundle \
           --macos-app-name="$NAME" \
           --macos-app-icon=logo.icns \
