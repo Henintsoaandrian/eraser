@@ -24,7 +24,7 @@ jobs:
           - os: macos-latest
             file_name: "MobiDocEraser"
             name: "macOS ARM"
-          - os: macos-15              # Intel officiel
+          - os: macos-13
             file_name: "MobiDocEraser"
             name: "macOS Intel"
 
@@ -46,6 +46,14 @@ jobs:
       run: |
         pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller pywin32 certifi
 
+    # ---- Téléchargement de la DLL libusb pour Windows ----
+    - name: Download libusb DLL (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        curl -L -o libusb.zip "https://github.com/libusb/libusb/releases/download/v1.0.26/libusb-1.0.26.7z"
+        7z x libusb.zip -o. -y
+        copy MS64\dll\libusb-1.0.dll .
+
     - name: Install libusb (macOS)
       if: runner.os == 'macOS'
       run: brew install libusb
@@ -58,6 +66,7 @@ jobs:
       if: runner.os == 'macOS'
       run: brew install create-dmg
 
+    # ---- Build macOS ----
     - name: Build with PyInstaller (macOS)
       if: runner.os == 'macOS'
       env:
@@ -74,6 +83,7 @@ jobs:
           --hidden-import pymobiledevice3 \
           main.py
 
+    # ---- Build Windows (avec DLL incluse) ----
     - name: Build with PyInstaller (Windows)
       if: runner.os == 'Windows'
       shell: bash
@@ -82,12 +92,14 @@ jobs:
           --name "${{ matrix.file_name }}" \
           --add-data "boot;boot" \
           --add-data "logo.png;." \
+          --add-binary "libusb-1.0.dll;." \
           --icon "logo.ico" \
           --collect-all pymobiledevice3 \
           --collect-all certifi \
           --hidden-import pymobiledevice3 \
           main.py
 
+    # ---- Build Linux ----
     - name: Build with PyInstaller (Linux)
       if: runner.os == 'Linux'
       run: |
@@ -100,6 +112,7 @@ jobs:
           --hidden-import pymobiledevice3 \
           main.py
 
+    # ---- Package macOS DMG ----
     - name: Package macOS DMG
       if: runner.os == 'macOS'
       run: |
@@ -124,6 +137,7 @@ jobs:
           exit 1
         fi
 
+    # ---- Upload des artefacts ----
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
