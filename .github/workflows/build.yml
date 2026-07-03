@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -23,21 +24,44 @@ jobs:
           - os: macos-latest
             file_name: "MobiDocEraser"
             name: "macOS ARM"
-          - os: macos-15-intel
+          - os: macos-13
             file_name: "MobiDocEraser"
             name: "macOS Intel"
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
-    # ---- AJOUT : dépendances supplémentaires ----
-    - name: Install Dependencies
-      run: pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller certifi pywin32
+    - name: Install Dependencies (Linux & macOS)
+      if: runner.os != 'Windows'
+      run: |
+        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller certifi
+
+    - name: Install Dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller pywin32 certifi
+
+    # ---- Téléchargement et extraction de libusb.dll ----
+    - name: Download libusb DLL (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        curl -L -o libusb.7z "https://github.com/libusb/libusb/releases/download/v1.0.26/libusb-1.0.26.7z"
+        7z x libusb.7z -o. -y
+        # Recherche récursive de la DLL et copie dans le répertoire courant
+        $dll = Get-ChildItem -Recurse -Filter "libusb-1.0.dll" | Select-Object -First 1
+        if ($dll) {
+          Copy-Item $dll.FullName .
+          Write-Host "✅ libusb-1.0.dll copié depuis $($dll.FullName)"
+        } else {
+          Write-Host "❌ libusb-1.0.dll introuvable"
+          exit 1
+        }
 
     - name: Install libusb (macOS)
       if: runner.os == 'macOS'
@@ -47,7 +71,7 @@ jobs:
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev libudev-dev
 
-    - name: Install DMG Creator
+    - name: Install DMG Creator (macOS)
       if: runner.os == 'macOS'
       run: brew install create-dmg
 
@@ -58,7 +82,7 @@ jobs:
       run: |
         SEP=":"
         if [ "$RUNNER_OS" = "Windows" ]; then SEP=";"; fi
-        # ---- AJOUT : icône selon l'OS ----
+        # Icône selon OS
         ICON_OPTION=""
         if [ "$RUNNER_OS" = "Windows" ]; then
           ICON_OPTION="--icon logo.ico"
@@ -69,6 +93,7 @@ jobs:
           --name "${{ matrix.file_name }}" \
           --add-data "boot${SEP}boot" \
           --add-data "logo.png${SEP}." \
+          --add-binary "libusb-1.0.dll${SEP}." \
           $ICON_OPTION \
           --collect-all pymobiledevice3 \
           --collect-all certifi \
@@ -90,7 +115,7 @@ jobs:
         fi
 
     - name: Upload Artifacts
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.name }}
         path: |
