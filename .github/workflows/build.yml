@@ -24,7 +24,7 @@ jobs:
           - os: macos-latest
             file_name: "MobiDocEraser"
             name: "macOS ARM"
-          - os: macos-15
+          - os: macos-13
             file_name: "MobiDocEraser"
             name: "macOS Intel"
 
@@ -46,7 +46,7 @@ jobs:
       run: |
         pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller pywin32 certifi
 
-    # ---- Installation de libusb via Chocolatey (Windows) ----
+    # ---- Téléchargement et installation de libusb (Windows uniquement) ----
     - name: Install libusb DLL (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
@@ -86,11 +86,16 @@ jobs:
         elif [ "$RUNNER_OS" = "macOS" ]; then
           ICON_OPTION="--icon logo.icns"
         fi
+        # Option pour inclure libusb uniquement sur Windows
+        BINARY_OPTION=""
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          BINARY_OPTION="--add-binary libusb-1.0.dll${SEP}."
+        fi
         pyinstaller --noconfirm --onefile --windowed \
           --name "${{ matrix.file_name }}" \
           --add-data "boot${SEP}boot" \
           --add-data "logo.png${SEP}." \
-          --add-binary "libusb-1.0.dll${SEP}." \
+          $BINARY_OPTION \
           $ICON_OPTION \
           --collect-all pymobiledevice3 \
           --collect-all certifi \
