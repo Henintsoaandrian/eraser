@@ -24,7 +24,7 @@ jobs:
           - os: macos-latest
             file_name: "MobiDocEraser"
             name: "macOS ARM"
-          - os: macos-15
+          - os: macos-15           
             file_name: "MobiDocEraser"
             name: "macOS Intel"
 
@@ -36,16 +36,15 @@ jobs:
       with:
         python-version: '3.11'
 
-    # --- Dépendances (PyInstaller) ---
     - name: Install Dependencies (Linux & macOS)
       if: runner.os != 'Windows'
       run: |
-        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller
+        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller certifi
 
     - name: Install Dependencies (Windows)
       if: runner.os == 'Windows'
       run: |
-        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller pywin32
+        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller pywin32 certifi
 
     - name: Install libusb (macOS)
       if: runner.os == 'macOS'
@@ -59,7 +58,6 @@ jobs:
       if: runner.os == 'macOS'
       run: brew install create-dmg
 
-    # --- Build macOS (création d'un .app) ---
     - name: Build with PyInstaller (macOS)
       if: runner.os == 'macOS'
       env:
@@ -72,10 +70,10 @@ jobs:
           --add-data "logo.icns:." \
           --icon "logo.icns" \
           --collect-all pymobiledevice3 \
+          --collect-all certifi \
           --hidden-import pymobiledevice3 \
           main.py
 
-    # --- Build Windows (exécutable unique) AVEC shell:bash ---
     - name: Build with PyInstaller (Windows)
       if: runner.os == 'Windows'
       shell: bash
@@ -86,10 +84,10 @@ jobs:
           --add-data "logo.png;." \
           --icon "logo.ico" \
           --collect-all pymobiledevice3 \
+          --collect-all certifi \
           --hidden-import pymobiledevice3 \
           main.py
 
-    # --- Build Linux (exécutable unique) ---
     - name: Build with PyInstaller (Linux)
       if: runner.os == 'Linux'
       run: |
@@ -98,10 +96,10 @@ jobs:
           --add-data "boot:boot" \
           --add-data "logo.png:." \
           --collect-all pymobiledevice3 \
+          --collect-all certifi \
           --hidden-import pymobiledevice3 \
           main.py
 
-    # --- Package macOS DMG ---
     - name: Package macOS DMG
       if: runner.os == 'macOS'
       run: |
@@ -126,7 +124,6 @@ jobs:
           exit 1
         fi
 
-    # --- Upload des artefacts ---
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
