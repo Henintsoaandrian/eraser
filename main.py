@@ -11,9 +11,8 @@ import urllib.request
 import urllib.parse
 from pathlib import Path
 
-import usb
+import libusb_package  # <-- Solution définitive pour Windows
 import usb.util
-import usb.backend.libusb1
 from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtCore import QByteArray, QObject, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QPainter, QPixmap, QPainterPath
@@ -143,32 +142,12 @@ def render_icon(name, color, size=20):
     return pixmap
 
 # ------------------------------------------------------------------
-# DFU utilities (CORRIGÉE)
+# DFU utilities (avec libusb-package)
 # ------------------------------------------------------------------
 def _dfu_serial(dispose=False):
-    """Recherche le périphérique en DFU avec le backend libusb1 explicite."""
-    # Déterminer le chemin de la DLL pour PyInstaller
-    dll_path = None
-    if getattr(sys, 'frozen', False):
-        # En mode PyInstaller, la DLL est dans _MEIPASS ou à côté de l'exe
-        base_dir = sys._MEIPASS
-        dll_path = os.path.join(base_dir, 'libusb-1.0.dll')
-        if not os.path.exists(dll_path):
-            base_dir = os.path.dirname(sys.executable)
-            dll_path = os.path.join(base_dir, 'libusb-1.0.dll')
-    else:
-        # En mode script, on cherche dans le dossier du script
-        dll_path = os.path.join(os.path.dirname(__file__), 'libusb-1.0.dll')
-        if not os.path.exists(dll_path):
-            dll_path = None
-
-    # Créer le backend avec le chemin explicite
-    if dll_path and os.path.exists(dll_path):
-        backend = usb.backend.libusb1.get_backend(find_library=lambda x: dll_path)
-    else:
-        backend = usb.backend.libusb1.get_backend()
-
-    dev = usb.core.find(idVendor=APPLE_VENDOR_ID, idProduct=DFU_PRODUCT_ID, backend=backend)
+    """Recherche le périphérique DFU avec libusb-package (embarque la DLL)."""
+    # Utilisation de libusb_package.find() au lieu de usb.core.find()
+    dev = libusb_package.find(idVendor=APPLE_VENDOR_ID, idProduct=DFU_PRODUCT_ID)
     if dev is None:
         return None, None
     try:
@@ -176,7 +155,7 @@ def _dfu_serial(dispose=False):
     except Exception:
         serial = ""
     if dispose:
-        usb.util.dispose_resources(dev)
+        libusb_package.util.dispose_resources(dev)
     return dev, serial
 
 def _serial_field(serial, key):
