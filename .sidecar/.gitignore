@@ -1,0 +1,8 @@
+# Ephemeral / machine-specific — do not commit
+cache/
+sessions/
+logs/
+scratchpad/
+audit-buffer/
+literature/
+pids.json

@@ -1,0 +1,143 @@
+name: Build Mobi Doc Eraser Passcode
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            file_name: "MobiDocEraser"
+            name: "Windows"
+          - os: ubuntu-latest
+            file_name: "MobiDocEraser"
+            name: "Linux"
+          - os: macos-latest
+            file_name: "MobiDocEraser"
+            name: "macOS ARM"
+          - os: macos-15-intel       # ← conservé tel quel (même s'il n'existe pas encore)
+            file_name: "MobiDocEraser"
+            name: "macOS Intel"
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    # --- Dépendances (avec Nuitka) ---
+    - name: Install Dependencies (Linux & macOS)
+      if: runner.os != 'Windows'
+      run: |
+        pip install PyQt5 pymobiledevice3==7.8.3 pyusb nuitka ordered-set zstandard
+        pip install pywin32   # nécessaire même sur macOS/Linux pour le collect-all
+
+    - name: Install Dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        pip install PyQt5 pymobiledevice3==7.8.3 pyusb nuitka ordered-set zstandard pywin32
+
+    - name: Install libusb (macOS)
+      if: runner.os == 'macOS'
+      run: brew install libusb
+
+    - name: Install libusb (Linux)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev libudev-dev patchelf
+
+    - name: Install DMG Creator (macOS)
+      if: runner.os == 'macOS'
+      run: brew install create-dmg
+
+    # --- Build avec Nuitka (Windows/Linux) ---
+    - name: Build with Nuitka (Windows/Linux)
+      if: runner.os != 'macOS'
+      shell: bash
+      env:
+        NAME: ${{ matrix.file_name }}
+      run: |
+        EXTRA=""
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          EXTRA="--windows-console-mode=disable"
+        fi
+        python -m nuitka \
+          --standalone --onefile \
+          --enable-plugin=pyqt5 \
+          --include-data-dir=boot=boot \
+          --include-data-file=logo.png=logo.png \
+          --include-package=pymobiledevice3 \
+          --include-package=usb \
+          --include-package=win32security \
+          --include-package=win32file \
+          --include-package=win32api \
+          --output-dir=dist \
+          --output-filename="$NAME" \
+          $EXTRA \
+          main.py
+
+    # --- Build avec Nuitka (macOS : app bundle pour DMG) ---
+    - name: Build with Nuitka (macOS)
+      if: runner.os == 'macOS'
+      env:
+        MACOSX_DEPLOYMENT_TARGET: "10.13"
+        NAME: ${{ matrix.file_name }}
+      run: |
+        python -m nuitka \
+          --standalone \
+          --enable-plugin=pyqt5 \
+          --include-data-dir=boot=boot \
+          --include-data-file=logo.png=logo.png \
+          --include-data-file=logo.icns=logo.icns \
+          --include-package=pymobiledevice3 \
+          --include-package=usb \
+          --macos-create-app-bundle \
+          --macos-app-name="$NAME" \
+          --macos-app-icon=logo.icns \
+          --output-dir=dist \
+          main.py
+
+    # --- Package macOS DMG ---
+    - name: Package macOS DMG
+      if: runner.os == 'macOS'
+      run: |
+        cd dist
+        APP_NAME="${{ matrix.file_name }}.app"
+        if [ -d "$APP_NAME" ]; then
+          plutil -replace LSMinimumSystemVersion -string "10.13" "$APP_NAME/Contents/Info.plist"
+          codesign --force --deep --sign - "$APP_NAME"
+          create-dmg \
+            --volname "Mobi Doc Eraser" \
+            --window-pos 200 120 \
+            --window-size 600 300 \
+            --icon-size 100 \
+            --text-size 12 \
+            --hide-extension "$APP_NAME" \
+            --app-drop-link 450 140 \
+            --icon "$APP_NAME" 150 140 \
+            "${{ matrix.file_name }}.dmg" \
+            "$APP_NAME"
+        else
+          echo "❌ $APP_NAME not found"
+          exit 1
+        fi
+
+    # --- Upload des artefacts ---
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.name }}
+        path: |
+          dist/*.dmg
+          dist/*.exe
+          dist/${{ matrix.file_name }}
