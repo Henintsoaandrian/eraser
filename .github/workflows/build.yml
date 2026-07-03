@@ -24,7 +24,7 @@ jobs:
           - os: macos-latest
             file_name: "MobiDocEraser"
             name: "macOS ARM"
-          - os: macos-13
+          - os: macos-13               # Intel officiel
             file_name: "MobiDocEraser"
             name: "macOS Intel"
 
@@ -36,15 +36,16 @@ jobs:
       with:
         python-version: '3.11'
 
+    # --- Dépendances (PyInstaller) ---
     - name: Install Dependencies (Linux & macOS)
       if: runner.os != 'Windows'
       run: |
-        pip install PyQt5 pymobiledevice3==7.8.3 pyusb nuitka ordered-set zstandard
+        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller
 
     - name: Install Dependencies (Windows)
       if: runner.os == 'Windows'
       run: |
-        pip install PyQt5 pymobiledevice3==7.8.3 pyusb nuitka ordered-set zstandard pywin32
+        pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller pywin32
 
     - name: Install libusb (macOS)
       if: runner.os == 'macOS'
@@ -52,93 +53,79 @@ jobs:
 
     - name: Install libusb (Linux)
       if: runner.os == 'Linux'
-      run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev libudev-dev patchelf
+      run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev libudev-dev
 
     - name: Install DMG Creator (macOS)
       if: runner.os == 'macOS'
       run: brew install create-dmg
 
-    - name: Build with Nuitka (Windows/Linux)
-      if: runner.os != 'macOS'
-      shell: bash
-      env:
-        NAME: ${{ matrix.file_name }}
-      run: |
-        EXTRA=""
-        if [ "$RUNNER_OS" = "Windows" ]; then
-          EXTRA="--windows-console-mode=disable"
-        fi
-        python -m nuitka \
-          --standalone --onefile \
-          --enable-plugin=pyqt5 \
-          --include-data-dir=boot=boot \
-          --include-data-file=logo.png=logo.png \
-          --include-package=pymobiledevice3 \
-          --include-package=usb \
-          --assume-yes-for-downloads \
-          --nofollow-import-to=IPython \
-          --nofollow-import-to=PIL.ImageTk \
-          --nofollow-import-to=_bisect \
-          --nofollow-import-to=_json \
-          --output-dir=dist \
-          --output-filename="$NAME" \
-          $EXTRA \
-          main.py
-
-    - name: Build with Nuitka (macOS)
+    # --- Build macOS (création d'un .app) ---
+    - name: Build with PyInstaller (macOS)
       if: runner.os == 'macOS'
       env:
         MACOSX_DEPLOYMENT_TARGET: "10.13"
-        NAME: ${{ matrix.file_name }}
       run: |
-        python -m nuitka \
-          --standalone \
-          --enable-plugin=pyqt5 \
-          --include-data-dir=boot=boot \
-          --include-data-file=logo.png=logo.png \
-          --include-data-file=logo.icns=logo.icns \
-          --include-package=pymobiledevice3 \
-          --include-package=usb \
-          --assume-yes-for-downloads \
-          --nofollow-import-to=IPython \
-          --nofollow-import-to=PIL.ImageTk \
-          --nofollow-import-to=_bisect \
-          --nofollow-import-to=_json \
-          --macos-create-app-bundle \
-          --macos-app-name="$NAME" \
-          --macos-app-icon=logo.icns \
-          --output-dir=dist \
+        pyinstaller --noconfirm --windowed \
+          --name "${{ matrix.file_name }}" \
+          --add-data "boot:boot" \
+          --add-data "logo.png:." \
+          --add-data "logo.icns:." \
+          --icon "logo.icns" \
+          --collect-all pymobiledevice3 \
+          --hidden-import pymobiledevice3 \
           main.py
 
+    # --- Build Windows (exécutable unique) ---
+    - name: Build with PyInstaller (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        pyinstaller --noconfirm --onefile --windowed \
+          --name "${{ matrix.file_name }}" \
+          --add-data "boot;boot" \
+          --add-data "logo.png;." \
+          --icon "logo.ico" \
+          --collect-all pymobiledevice3 \
+          --hidden-import pymobiledevice3 \
+          main.py
+
+    # --- Build Linux (exécutable unique) ---
+    - name: Build with PyInstaller (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        pyinstaller --noconfirm --onefile --windowed \
+          --name "${{ matrix.file_name }}" \
+          --add-data "boot:boot" \
+          --add-data "logo.png:." \
+          --collect-all pymobiledevice3 \
+          --hidden-import pymobiledevice3 \
+          main.py
+
+    # --- Package macOS DMG ---
     - name: Package macOS DMG
       if: runner.os == 'macOS'
       run: |
         cd dist
-        echo "📂 Contenu de dist :"
-        ls -la
-
-        # Chercher un fichier .app (n'importe quel nom)
-        APP_NAME=$(find . -maxdepth 1 -type d -name "*.app" | head -1 | sed 's/^\.\///')
-        if [ -z "$APP_NAME" ]; then
-          echo "❌ Aucun .app trouvé dans dist/"
+        APP_NAME="${{ matrix.file_name }}.app"
+        if [ -d "$APP_NAME" ]; then
+          plutil -replace LSMinimumSystemVersion -string "10.13" "$APP_NAME/Contents/Info.plist"
+          codesign --force --deep --sign - "$APP_NAME"
+          create-dmg \
+            --volname "Mobi Doc Eraser" \
+            --window-pos 200 120 \
+            --window-size 600 300 \
+            --icon-size 100 \
+            --text-size 12 \
+            --hide-extension "$APP_NAME" \
+            --app-drop-link 450 140 \
+            --icon "$APP_NAME" 150 140 \
+            "${{ matrix.file_name }}.dmg" \
+            "$APP_NAME"
+        else
+          echo "❌ .app not found in dist/"
           exit 1
         fi
 
-        echo "✅ .app trouvé : $APP_NAME"
-        plutil -replace LSMinimumSystemVersion -string "10.13" "$APP_NAME/Contents/Info.plist"
-        codesign --force --deep --sign - "$APP_NAME"
-        create-dmg \
-          --volname "Mobi Doc Eraser" \
-          --window-pos 200 120 \
-          --window-size 600 300 \
-          --icon-size 100 \
-          --text-size 12 \
-          --hide-extension "$APP_NAME" \
-          --app-drop-link 450 140 \
-          --icon "$APP_NAME" 150 140 \
-          "${{ matrix.file_name }}.dmg" \
-          "$APP_NAME"
-
+    # --- Upload des artefacts ---
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
