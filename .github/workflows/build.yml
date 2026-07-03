@@ -24,7 +24,7 @@ jobs:
           - os: macos-latest
             file_name: "MobiDocEraser"
             name: "macOS ARM"
-          - os: macos-13               # Runner Intel officiel
+          - os: macos-13
             file_name: "MobiDocEraser"
             name: "macOS Intel"
 
@@ -52,16 +52,17 @@ jobs:
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        # Téléchargement de l'archive officielle (v1.0.26)
-        curl -L -o libusb.7z "https://github.com/libusb/libusb/releases/download/v1.0.26/libusb-1.0.26.7z"
-        # Extraction avec 7z (disponible sur les runners Windows)
-        7z x libusb.7z -o. -y
-        # Copie de la DLL depuis le sous-dossier MS64\dll (pour 64-bit)
-        Copy-Item "MS64\dll\libusb-1.0.dll" .
-        if (Test-Path "libusb-1.0.dll") {
-          Write-Host "✅ libusb-1.0.dll téléchargé avec succès"
+        # Télécharger l'archive ZIP depuis les releases officielles
+        curl -L -o libusb.zip "https://github.com/libusb/libusb/releases/download/v1.0.26/libusb-1.0.26.zip"
+        # Extraire avec Expand-Archive (intégré à PowerShell)
+        Expand-Archive -Path libusb.zip -DestinationPath . -Force
+        # Rechercher la DLL dans les sous-dossiers et la copier à la racine
+        $dll = Get-ChildItem -Recurse -Filter "libusb-1.0.dll" | Select-Object -First 1
+        if ($dll) {
+          Copy-Item $dll.FullName .
+          Write-Host "✅ libusb-1.0.dll extrait avec succès"
         } else {
-          Write-Host "❌ Échec : libusb-1.0.dll introuvable"
+          Write-Host "❌ libusb-1.0.dll introuvable"
           exit 1
         }
 
