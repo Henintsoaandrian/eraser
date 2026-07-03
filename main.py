@@ -58,6 +58,7 @@ DFU_TRANSFER_SIZE = 0x800
 
 SUPPORTED_CPIDS = {"0x8020", "0x8030"}
 
+# (cpid, bdid) -> (name, iBoot codename)
 DEVICES = {
     ("0x8020", 0x0A): ("iPhone XS Max", "d331"),
     ("0x8020", 0x0C): ("iPhone XR", "n841"),
@@ -93,9 +94,14 @@ RED          = "#F09595"
 RED_BG       = "#3c1a1a"
 MONO_FONT    = "Menlo, Consolas, monospace"
 
-STEPS = ["Uploading", "Booting iBEC", "Waiting for recovery mode", "Sending obliteration commands"]
+STEPS = [
+    "Uploading",
+    "Booting iBEC",
+    "Waiting for recovery mode",
+    "Sending obliteration commands",
+]
 
-# --- SVG Icons ---
+# --- SVG Icons (fallback) ---
 _ICON_TEMPLATE = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
     'fill="none" stroke="{color}" stroke-width="1.8" '
@@ -486,7 +492,7 @@ class Badge(QFrame):
             self._icon_lbl.hide()
 
 # ------------------------------------------------------------------
-# MainWindow (corrigé)
+# MainWindow
 # ------------------------------------------------------------------
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -537,6 +543,7 @@ class MainWindow(QMainWindow):
         card_l.setContentsMargins(20, 18, 20, 20)
         card_l.setSpacing(16)
 
+        # Header avec logo net
         header = QHBoxLayout()
         header.setSpacing(10)
 
@@ -575,6 +582,7 @@ class MainWindow(QMainWindow):
         header.addWidget(self.pwnd_badge, alignment=Qt.AlignTop)
         card_l.addLayout(header)
 
+        # Info subcard
         info = QFrame()
         info.setObjectName("subcard")
         grid = QGridLayout(info)
@@ -593,6 +601,7 @@ class MainWindow(QMainWindow):
         self.mode_val.setText("DFU")
         card_l.addWidget(info)
 
+        # Progress
         prog_head = QHBoxLayout()
         self.step_lbl = QLabel("Ready")
         self.step_lbl.setObjectName("subLbl")
@@ -610,6 +619,7 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         card_l.addWidget(self.progress)
 
+        # Run button (éclairci)
         self.run_btn = QPushButton("Eraser")
         self.run_btn.setObjectName("runBtn")
         self.run_btn.setFixedHeight(44)
@@ -621,6 +631,7 @@ class MainWindow(QMainWindow):
         outer.addWidget(card)
         outer.addStretch(1)
 
+        # Footer
         footer = QHBoxLayout()
         footer.addStretch(1)
         tg_icon = QLabel()
@@ -702,8 +713,7 @@ class MainWindow(QMainWindow):
                 self.pwnd_badge.set_state("NOT PWNED", RED, RED_BG, "lock-closed")
         else:
             self.pwnd_badge.set_state(" ", TEXT_MUTED, BG_SUBCARD)
-        # Le bouton est activé UNIQUEMENT si l'appareil est supporté, PWND et iBEC présent
-        # (pas de condition sur _ecid_valid ici)
+        # Le bouton est activé immédiatement (sans attendre la validation ECID)
         self.run_btn.setEnabled(can_run and not self._busy)
 
     def _on_detected(self, info):
@@ -751,8 +761,7 @@ class MainWindow(QMainWindow):
         else:
             self._ecid_valid = False
 
-        # Le bouton est activé si l'appareil est supporté, PWND et iBEC présent
-        # (indépendamment de _ecid_valid)
+        # Activer le bouton si l'appareil est supporté, PWND et iBEC présent
         can_run = pwnd and self._ibec_ok
         self._show_device(name, f"CPID:{cpid} BDID:{bdid}", pwnd, can_run=can_run)
         self.target_val.setText(codename)
@@ -760,30 +769,32 @@ class MainWindow(QMainWindow):
     def _check_ecid(self, ecid):
         def task():
             valid = check_ecid_online(ecid)
-            # Mise à jour sur le thread principal
             QTimer.singleShot(0, lambda: self._update_ecid_status(valid))
         threading.Thread(target=task, daemon=True).start()
 
     def _update_ecid_status(self, valid):
         self._ecid_valid = valid
-        # On n'active pas le bouton ici car il est déjà géré par _show_device
-        # Mais on peut afficher un message de statut
         if valid:
             self.step_lbl.setText("✅ ECID valid")
         else:
             self.step_lbl.setText("❌ ECID not registered")
+        # Ne pas modifier l'état du bouton ici
 
     # ------------------------------------------------------------------
     # Run
     # ------------------------------------------------------------------
     def _start(self):
-        # Vérifier d'abord si l'ECID est valide
+        # Si la vérification ECID n'est pas encore faite, on la fait maintenant (synchrone)
         if self._ecid_valid is None:
-            QMessageBox.warning(self, "Vérification en cours", "Veuillez patienter, la vérification ECID est en cours.")
-            return
+            self.step_lbl.setText("⏳ Checking ECID...")
+            valid = check_ecid_online(self._current_ecid)
+            self._ecid_valid = valid
+            if valid:
+                self.step_lbl.setText("✅ ECID valid")
+            else:
+                self.step_lbl.setText("❌ ECID not registered")
 
         if not self._ecid_valid:
-            # ECID non enregistré : afficher la popup d'enregistrement
             dlg = RegisterDialog(self, ecid=self._current_ecid)
             dlg.exec_()
             return
