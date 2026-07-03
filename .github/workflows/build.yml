@@ -24,7 +24,7 @@ jobs:
           - os: macos-latest
             file_name: "MobiDocEraser"
             name: "macOS ARM"
-          - os: macos-13               # Intel officiel
+          - os: macos-15
             file_name: "MobiDocEraser"
             name: "macOS Intel"
 
@@ -75,9 +75,10 @@ jobs:
           --hidden-import pymobiledevice3 \
           main.py
 
-    # --- Build Windows (exécutable unique) ---
+    # --- Build Windows (exécutable unique) AVEC shell:bash ---
     - name: Build with PyInstaller (Windows)
       if: runner.os == 'Windows'
+      shell: bash
       run: |
         pyinstaller --noconfirm --onefile --windowed \
           --name "${{ matrix.file_name }}" \
