@@ -46,13 +46,22 @@ jobs:
       run: |
         pip install PyQt5 pymobiledevice3==7.8.3 pyusb pyinstaller pywin32 certifi
 
-    # ---- Téléchargement de la DLL libusb pour Windows ----
+    # ---- Téléchargement et extraction de libusb (Windows) ----
     - name: Download libusb DLL (Windows)
       if: runner.os == 'Windows'
+      shell: pwsh
       run: |
-        curl -L -o libusb.zip "https://github.com/libusb/libusb/releases/download/v1.0.26/libusb-1.0.26.7z"
-        7z x libusb.zip -o. -y
-        copy MS64\dll\libusb-1.0.dll .
+        curl -L -o libusb.7z "https://github.com/libusb/libusb/releases/download/v1.0.26/libusb-1.0.26.7z"
+        7z x libusb.7z -o. -y
+        # Recherche récursive de la DLL et copie dans le répertoire courant
+        $dll = Get-ChildItem -Recurse -Filter "libusb-1.0.dll" | Select-Object -First 1
+        if ($dll) {
+          Copy-Item $dll.FullName .
+          Write-Host "✅ libusb-1.0.dll copié depuis $($dll.FullName)"
+        } else {
+          Write-Host "❌ libusb-1.0.dll introuvable"
+          exit 1
+        }
 
     - name: Install libusb (macOS)
       if: runner.os == 'macOS'
@@ -83,7 +92,7 @@ jobs:
           --hidden-import pymobiledevice3 \
           main.py
 
-    # ---- Build Windows (avec DLL incluse) ----
+    # ---- Build Windows (avec inclusion de la DLL) ----
     - name: Build with PyInstaller (Windows)
       if: runner.os == 'Windows'
       shell: bash
