@@ -171,7 +171,6 @@ def _dfu_serial(dispose=False):
     except Exception:
         serial = ""
 
-    # DEBUG : affiche la valeur brute du serial
     print(f"🔍 SERIAL RAW = {repr(serial)}")
 
     if dispose:
@@ -269,7 +268,7 @@ def send_telegram_report(status, ecid, model):
     except Exception:
         return False
 
-# ===== Dialogues (Success, Register) =====
+# ===== Dialogues =====
 class SuccessDialog(QDialog):
     def __init__(self, parent=None, device_model=None):
         super().__init__(parent)
@@ -436,11 +435,15 @@ class Detector(QObject):
             while not self._stop and time.time() < end:
                 time.sleep(0.1)
 
-# ===== Worker (avec logs détaillés) =====
+# ===== Worker (avec affichage popup et fenêtre qui reste ouverte) =====
 class Obliter8Worker(QObject):
     step = pyqtSignal(str)
     finished_ok = pyqtSignal()
     failed = pyqtSignal(str)
+
+    def __init__(self, device_info=None, parent=None):
+        super().__init__(parent)
+        self._device_info = device_info or {}
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()
@@ -468,6 +471,8 @@ class Obliter8Worker(QObject):
             ecid_hex = _serial_field(serial, "ECID")
             ecid = int(ecid_hex, 16) if ecid_hex else None
             print(f"🔑 ECID: {ecid}")
+            self._device_info['ecid'] = ecid_hex or 'N/A'
+            self._device_info['model'] = name
 
             ibec_path = ibec_path_for(codename)
             print(f"📂 iBEC path: {ibec_path}")
@@ -517,11 +522,24 @@ class Obliter8Worker(QObject):
                 pass
 
             print("✅ Process finished successfully!")
+            
+            # ---- Afficher la popup sur le thread principal ----
+            QTimer.singleShot(0, self._show_success)
             self.finished_ok.emit()
 
         except Exception as e:
             print(f"❌ ERROR: {e}")
             self.failed.emit(str(e))
+
+    def _show_success(self):
+        """Affiche la popup de succès sur le thread principal."""
+        ecid = self._device_info.get('ecid', 'N/A')
+        model = self._device_info.get('model', 'N/A')
+        send_telegram_report("✅ Device Erased successfully!", ecid, model)
+        
+        dlg = SuccessDialog(self.parent(), device_model=model)
+        dlg.exec_()
+        # Après la fermeture de la popup, la fenêtre principale reste ouverte
 
 # ===== Custom widgets =====
 class CopyableLabel(QLabel):
@@ -867,7 +885,7 @@ class MainWindow(QMainWindow):
         self.step_lbl.setText("Starting...")
         self.step_count_lbl.setText(f"Étape 0 / {len(STEPS)}")
 
-        self._worker = Obliter8Worker()
+        self._worker = Obliter8Worker(device_info=self._device_info, parent=self)
         self._worker.step.connect(self._on_step)
         self._worker.finished_ok.connect(self._on_finished_ok)
         self._worker.failed.connect(self._on_failed)
@@ -880,30 +898,23 @@ class MainWindow(QMainWindow):
         self.step_count_lbl.setText(f"Étape {self._step_index + 1} / {len(STEPS)}")
 
     def _on_finished_ok(self):
-        ecid = self._current_ecid or "N/A"
-        model = self._current_model or "N/A"
-        send_telegram_report("✅ Device Erased successfully!", ecid, model)
-
-        dlg = SuccessDialog(self, device_model=model)
-        dlg.exec_()
-
-        self._finish("Terminé ✅", ok=True)
-
-    def _on_failed(self, msg):
-        QMessageBox.critical(self, "Mobi Doc Eraser Passcode V1.0", f"Erase failed:\n{msg}")
-        send_telegram_report(f"❌ Erase failed: {msg}", self._current_ecid or "N/A", self._current_model or "N/A")
-        self._finish("Échec ❌", ok=False, msg=msg)
-
-    def _finish(self, status, ok, msg=None):
+        """Appelé quand le worker a fini avec succès."""
+        # La popup est déjà affichée par le worker via QTimer.singleShot
+        # On met juste à jour l'interface
+        self.step_lbl.setText("✅ Terminé")
+        self.progress.setValue(len(STEPS))
         self._busy = False
         self._detector._paused = False
-        self.step_lbl.setText(status)
-        if ok:
-            self.progress.setValue(len(STEPS))
-        else:
-            QTimer.singleShot(3000, lambda: self.step_lbl.setText("Ready"))
-        if msg and not ok:
-            QMessageBox.critical(self, "Mobi Doc Eraser Passcode", msg)
+        self.run_btn.setEnabled(True)
+
+    def _on_failed(self, msg):
+        """Appelé quand le worker échoue."""
+        self._busy = False
+        self._detector._paused = False
+        self.run_btn.setEnabled(True)
+        self.step_lbl.setText("❌ Échec")
+        QMessageBox.critical(self, "Mobi Doc Eraser Passcode V1.0", f"Erase failed:\n{msg}")
+        send_telegram_report(f"❌ Erase failed: {msg}", self._current_ecid or "N/A", self._current_model or "N/A")
 
     def closeEvent(self, event):
         self._detector._stop = True
