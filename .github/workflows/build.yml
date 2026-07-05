@@ -24,7 +24,7 @@ jobs:
           - os: macos-latest
             file_name: "MobiDocEraser"
             name: "macOS ARM"
-          - os: macos-15
+          - os: macos-13
             file_name: "MobiDocEraser"
             name: "macOS Intel"
 
@@ -66,8 +66,10 @@ jobs:
         SEP=":"
         if [ "$RUNNER_OS" = "Windows" ]; then SEP=";"; fi
         ICON_OPTION=""
+        MANIFEST_OPTION=""
         if [ "$RUNNER_OS" = "Windows" ]; then
           ICON_OPTION="--icon logo.ico"
+          MANIFEST_OPTION="--manifest main.exe.manifest"
         elif [ "$RUNNER_OS" = "macOS" ]; then
           ICON_OPTION="--icon logo.icns"
         fi
@@ -76,6 +78,7 @@ jobs:
           --add-data "boot${SEP}boot" \
           --add-data "logo.png${SEP}." \
           $ICON_OPTION \
+          $MANIFEST_OPTION \
           --collect-all pymobiledevice3 \
           --collect-all libusb-package \
           --collect-all certifi \
