@@ -9,16 +9,19 @@ import ssl
 import certifi
 import urllib.request
 import urllib.parse
+import subprocess
+import tempfile
+import shutil
 from pathlib import Path
 
-# ===== Gestion libusb-package (SANS écraser usb.core.find) =====
+# ===== libusb-package management =====
 try:
     import libusb_package
     HAS_LIBUSB = True
-    print("✅ libusb-package chargé")
+    print("✅ libusb-package loaded")
 except ImportError:
     HAS_LIBUSB = False
-    print("ℹ️ libusb-package non disponible, utilisation de pyusb standard")
+    print("ℹ️ libusb-package not available, using standard pyusb")
 
 import usb.core
 import usb.util
@@ -31,6 +34,91 @@ from PyQt5.QtWidgets import (
     QMessageBox, QProgressBar, QPushButton, QVBoxLayout, QWidget, QDialog,
 )
 from pymobiledevice3.irecv import IRecv
+
+# ======================================================================
+# Driver automation functions (Windows only)
+# ======================================================================
+ZADIG_URL = "https://github.com/pbatard/libwdi/releases/download/v2.5/zadig-2.5.exe"
+APPLE_VID = "0x05AC"
+DFU_PID = "0x1227"
+
+def is_admin():
+    """Check if the script is running with administrator privileges."""
+    try:
+        return os.getuid() == 0
+    except AttributeError:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+
+def download_zadig():
+    """Download Zadig.exe to the temporary folder."""
+    zadig_path = os.path.join(tempfile.gettempdir(), "zadig.exe")
+    if not os.path.exists(zadig_path):
+        print("📥 Downloading Zadig...")
+        try:
+            urllib.request.urlretrieve(ZADIG_URL, zadig_path)
+            print("✅ Zadig downloaded.")
+        except Exception as e:
+            print(f"❌ Failed to download Zadig: {e}")
+            return None
+    return zadig_path
+
+def install_winusb_driver():
+    """Install WinUSB driver for the DFU device via Zadig in silent mode."""
+    if not is_admin():
+        print("❌ Administrator privileges required.")
+        return False
+
+    zadig = download_zadig()
+    if zadig is None:
+        return False
+
+    cmd = [
+        zadig,
+        "/install",
+        f"/vid {APPLE_VID}",
+        f"/pid {DFU_PID}",
+        "/driver WinUSB",
+        "/quiet"
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        print("✅ WinUSB driver installed successfully.")
+        time.sleep(2)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Installation failed: {e.stderr.decode()}")
+        return False
+
+def is_dfu_present():
+    """Check if a DFU device is detected."""
+    try:
+        dev = usb.core.find(idVendor=0x05AC, idProduct=0x1227)
+        return dev is not None
+    except Exception:
+        return False
+
+def ensure_driver_installed():
+    """Check device presence, install driver if missing."""
+    if sys.platform != 'win32':
+        return True
+    if is_dfu_present():
+        print("✅ DFU device detected.")
+        return True
+    else:
+        print("⚠️ DFU device not detected. Attempting driver installation...")
+        if install_winusb_driver():
+            if is_dfu_present():
+                print("✅ DFU device now detected.")
+                return True
+            else:
+                print("❌ Device still not detected. Please reconnect it.")
+                return False
+        return False
+
+# ======================================================================
+# Utility functions
+# ======================================================================
 
 def resource_path(name):
     base = getattr(sys, '_MEIPASS', os.path.abspath('.'))
@@ -161,7 +249,7 @@ def _dfu_serial(dispose=False):
             return None, None
 
     except Exception as e:
-        print(f"Erreur de détection DFU: {e}")
+        print(f"DFU detection error: {e}")
         return None, None
 
     try:
@@ -182,7 +270,6 @@ def _dfu_serial(dispose=False):
     return dev, serial
 
 def _recovery_find():
-    """Recherche le périphérique en mode recovery."""
     try:
         if HAS_LIBUSB:
             return libusb_package.find(
@@ -268,7 +355,7 @@ def send_telegram_report(status, ecid, model):
     except Exception:
         return False
 
-# ===== Dialogues =====
+# ===== Dialogs =====
 class SuccessDialog(QDialog):
     def __init__(self, parent=None, device_model=None):
         super().__init__(parent)
@@ -307,17 +394,18 @@ class SuccessDialog(QDialog):
         logo_path = resource_path('logo.png')
         if os.path.exists(logo_path):
             pix = load_retina_pixmap(logo_path, 72)
-            rounded = QPixmap(72 * (pix.devicePixelRatio() if pix.devicePixelRatio() else 1),
-                               72 * (pix.devicePixelRatio() if pix.devicePixelRatio() else 1))
+            ratio = pix.devicePixelRatio() if pix.devicePixelRatio() else 1
+            target_size = int(72 * ratio)
+            rounded = QPixmap(target_size, target_size)
             rounded.fill(Qt.transparent)
             p = QPainter(rounded)
             p.setRenderHint(QPainter.Antialiasing)
             path = QPainterPath()
-            path.addRoundedRect(0, 0, rounded.width(), rounded.height(), 14, 14)
+            path.addRoundedRect(0, 0, target_size, target_size, 14, 14)
             p.setClipPath(path)
             p.drawPixmap(0, 0, pix)
             p.end()
-            rounded.setDevicePixelRatio(pix.devicePixelRatio() if pix.devicePixelRatio() else 1)
+            rounded.setDevicePixelRatio(ratio)
             icon_lbl.setPixmap(rounded)
         else:
             icon_lbl.setText("🔒")
@@ -435,7 +523,7 @@ class Detector(QObject):
             while not self._stop and time.time() < end:
                 time.sleep(0.1)
 
-# ===== Worker (avec logs et popups) =====
+# ===== Worker =====
 class Obliter8Worker(QObject):
     step = pyqtSignal(str)
     finished_ok = pyqtSignal()
@@ -450,7 +538,7 @@ class Obliter8Worker(QObject):
 
     def _run(self):
         try:
-            print("🔍 Récupération du périphérique DFU...")
+            print("🔍 Fetching DFU device...")
             dev, serial = _dfu_serial()
             if dev is None:
                 raise Exception("DFU device not found")
@@ -487,7 +575,7 @@ class Obliter8Worker(QObject):
             self.step.emit("Booting iBEC...")
             dfu_boot(dev)
 
-            # ---- Attente du mode recovery ----
+            # ---- Wait for recovery mode ----
             print("⏳ Waiting for recovery mode...")
             self.step.emit("Waiting for recovery mode...")
             recovery_found = False
@@ -522,27 +610,29 @@ class Obliter8Worker(QObject):
                 pass
 
             print("✅ Process finished successfully!")
-            # Afficher la popup sur le thread principal
             QTimer.singleShot(0, self._show_success)
             self.finished_ok.emit()
 
         except Exception as e:
             print(f"❌ ERROR: {e}")
-            # Afficher l'erreur sur le thread principal
             QTimer.singleShot(0, lambda: self._show_error(str(e)))
             self.failed.emit(str(e))
 
     def _show_success(self):
-        """Affiche la popup de succès sur le thread principal."""
+        parent = self.parent()
+        if parent is None:
+            parent = QApplication.activeWindow()
         ecid = self._device_info.get('ecid', 'N/A')
         model = self._device_info.get('model', 'N/A')
         send_telegram_report("✅ Device Erased successfully!", ecid, model)
-        dlg = SuccessDialog(self.parent(), device_model=model)
+        dlg = SuccessDialog(parent, device_model=model)
         dlg.exec_()
 
     def _show_error(self, msg):
-        """Affiche la popup d'erreur sur le thread principal."""
-        QMessageBox.critical(self.parent(), "Mobi Doc Eraser", f"Erase failed:\n{msg}")
+        parent = self.parent()
+        if parent is None:
+            parent = QApplication.activeWindow()
+        QMessageBox.critical(parent, "Mobi Doc Eraser", f"Erase failed:\n{msg}")
         send_telegram_report(f"❌ Erase failed: {msg}", self._device_info.get('ecid', 'N/A'), self._device_info.get('model', 'N/A'))
 
 # ===== Custom widgets =====
@@ -552,7 +642,7 @@ class CopyableLabel(QLabel):
         self.setObjectName("monoLbl")
         self.setAlignment(Qt.AlignRight)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("Cliquer pour copier")
+        self.setToolTip("Click to copy")
         self._value = ""
 
     def set_value(self, text):
@@ -563,7 +653,7 @@ class CopyableLabel(QLabel):
         if self._value:
             QApplication.clipboard().setText(self._value)
             original = self.text()
-            self.setText("Copié !")
+            self.setText("Copied!")
             QTimer.singleShot(800, lambda: self.setText(original))
         super().mousePressEvent(event)
 
@@ -600,6 +690,21 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Mobi Doc Eraser Passcode V1.0")
 
+        # ---- State variables ----
+        self._device_info = {}
+        self._busy = False
+        self._step_index = -1
+        self._ecid_valid = None
+        self._current_ecid = None
+        self._current_model = None
+        self._pwnd = False
+        self._ibec_ok = False
+        self._device_supported = False
+
+        # ---- Automatic driver installation on Windows ----
+        if sys.platform == 'win32':
+            threading.Thread(target=ensure_driver_installed, daemon=True).start()
+
         logo_path = resource_path('logo.png')
         if os.path.exists(logo_path):
             self.setWindowIcon(QIcon(logo_path))
@@ -611,14 +716,6 @@ class MainWindow(QMainWindow):
                     break
 
         self.resize(420, 380)
-        self._busy = False
-        self._step_index = -1
-        self._ecid_valid = None
-        self._current_ecid = None
-        self._current_model = None
-        self._pwnd = False
-        self._ibec_ok = False
-        self._device_supported = False
         self._build_ui()
         self._apply_theme()
         screen = QApplication.primaryScreen().availableGeometry()
@@ -692,7 +789,7 @@ class MainWindow(QMainWindow):
         grid.addWidget(ecid_label, 0, 0)
         grid.addWidget(self.ecid_val, 0, 1)
 
-        self.target_val = self._info_row(grid, 1, "iBoot cible")
+        self.target_val = self._info_row(grid, 1, "iBoot target")
         self.mode_val = self._info_row(grid, 2, "Mode")
         self.mode_val.setText("DFU")
         card_l.addWidget(info)
@@ -887,7 +984,7 @@ class MainWindow(QMainWindow):
         self.run_btn.setEnabled(False)
         self.progress.setValue(0)
         self.step_lbl.setText("Starting...")
-        self.step_count_lbl.setText(f"Étape 0 / {len(STEPS)}")
+        self.step_count_lbl.setText(f"Step 0 / {len(STEPS)}")
 
         self._worker = Obliter8Worker(device_info=self._device_info, parent=self)
         self._worker.step.connect(self._on_step)
@@ -899,25 +996,20 @@ class MainWindow(QMainWindow):
         self.step_lbl.setText(text)
         self._step_index = min(self._step_index + 1, len(STEPS) - 1)
         self.progress.setValue(self._step_index + 1)
-        self.step_count_lbl.setText(f"Étape {self._step_index + 1} / {len(STEPS)}")
+        self.step_count_lbl.setText(f"Step {self._step_index + 1} / {len(STEPS)}")
 
     def _on_finished_ok(self):
-        """Appelé quand le worker a fini avec succès."""
-        # La popup est déjà affichée par le worker via QTimer.singleShot
-        # On met juste à jour l'interface
-        self.step_lbl.setText("✅ Terminé")
+        self.step_lbl.setText("✅ Done")
         self.progress.setValue(len(STEPS))
         self._busy = False
         self._detector._paused = False
         self.run_btn.setEnabled(True)
 
     def _on_failed(self, msg):
-        """Appelé quand le worker échoue."""
         self._busy = False
         self._detector._paused = False
         self.run_btn.setEnabled(True)
-        self.step_lbl.setText("❌ Échec")
-        # La popup d'erreur est déjà affichée par le worker
+        self.step_lbl.setText("❌ Failed")
 
     def closeEvent(self, event):
         self._detector._stop = True
