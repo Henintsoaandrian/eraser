@@ -435,7 +435,7 @@ class Detector(QObject):
             while not self._stop and time.time() < end:
                 time.sleep(0.1)
 
-# ===== Worker (avec affichage popup et fenêtre qui reste ouverte) =====
+# ===== Worker (avec logs et popups) =====
 class Obliter8Worker(QObject):
     step = pyqtSignal(str)
     finished_ok = pyqtSignal()
@@ -522,13 +522,14 @@ class Obliter8Worker(QObject):
                 pass
 
             print("✅ Process finished successfully!")
-            
-            # ---- Afficher la popup sur le thread principal ----
+            # Afficher la popup sur le thread principal
             QTimer.singleShot(0, self._show_success)
             self.finished_ok.emit()
 
         except Exception as e:
             print(f"❌ ERROR: {e}")
+            # Afficher l'erreur sur le thread principal
+            QTimer.singleShot(0, lambda: self._show_error(str(e)))
             self.failed.emit(str(e))
 
     def _show_success(self):
@@ -536,10 +537,13 @@ class Obliter8Worker(QObject):
         ecid = self._device_info.get('ecid', 'N/A')
         model = self._device_info.get('model', 'N/A')
         send_telegram_report("✅ Device Erased successfully!", ecid, model)
-        
         dlg = SuccessDialog(self.parent(), device_model=model)
         dlg.exec_()
-        # Après la fermeture de la popup, la fenêtre principale reste ouverte
+
+    def _show_error(self, msg):
+        """Affiche la popup d'erreur sur le thread principal."""
+        QMessageBox.critical(self.parent(), "Mobi Doc Eraser", f"Erase failed:\n{msg}")
+        send_telegram_report(f"❌ Erase failed: {msg}", self._device_info.get('ecid', 'N/A'), self._device_info.get('model', 'N/A'))
 
 # ===== Custom widgets =====
 class CopyableLabel(QLabel):
@@ -913,8 +917,7 @@ class MainWindow(QMainWindow):
         self._detector._paused = False
         self.run_btn.setEnabled(True)
         self.step_lbl.setText("❌ Échec")
-        QMessageBox.critical(self, "Mobi Doc Eraser Passcode V1.0", f"Erase failed:\n{msg}")
-        send_telegram_report(f"❌ Erase failed: {msg}", self._current_ecid or "N/A", self._current_model or "N/A")
+        # La popup d'erreur est déjà affichée par le worker
 
     def closeEvent(self, event):
         self._detector._stop = True
